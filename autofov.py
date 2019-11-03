@@ -14,9 +14,10 @@ def autofov(ksp, coord, dcf, nro=100, device=sp.cpu_device,
         dcfc = dcf[:, :nro]
         coordc2 = coordc * 2
 
-        num_coils = kspc.shape[0]
+        num_coils = len(kspc)
         imgc_shape = np.array(sp.estimate_shape(coordc))
         imgc2_shape = sp.estimate_shape(coordc2)
+        imgc2_center = [i // 2 for i in imgc2_shape]
         imgc2 = sp.nufft_adjoint(sp.to_device(dcfc * kspc, device),
                                  coordc2, [num_coils] + imgc2_shape)
         imgc2 = xp.sum(xp.abs(imgc2)**2, axis=0)**0.5
@@ -27,25 +28,14 @@ def autofov(ksp, coord, dcf, nro=100, device=sp.cpu_device,
             thresh *= imgc2.max()
 
         boxc = imgc2 > thresh
+
         boxc = sp.to_device(boxc)
         boxc_idx = np.nonzero(boxc)
-        boxc_bound = np.array([[min(boxc_idx[i]), max(boxc_idx[i])]
-                               for i in range(3)])
-        boxc_shape = boxc_bound[:, 1] - boxc_bound[:, 0]
-        boxc_center = (boxc_bound[:, 1] + boxc_bound[:, 0]) / 2
-        boxc_shift = boxc_center - np.array(imgc2_shape) // 2
+        boxc_shape = np.array([int(np.abs(boxc_idx[i] - imgc2_center[i]).max()) * 2
+                               for i in range(imgc2.ndim)])
 
         img_scale = boxc_shape / imgc_shape
         coord *= img_scale * pad
-        new_img_shape = sp.estimate_shape(coord)
-
-        phase_shift = boxc_shift / imgc_shape
-        lin_phase = np.exp(1j * 2 * np.pi * np.sum(
-            coord * phase_shift, axis=-1))
-        ksp *= lin_phase
-        shift = phase_shift * new_img_shape
-
-        return shift
 
 
 if __name__ == '__main__':
@@ -74,5 +64,4 @@ if __name__ == '__main__':
     logging.info('Image shape: {}'.format(sp.estimate_shape(coord)))
 
     logging.info('Saving data.')
-    np.save(args.ksp_file, ksp)
     np.save(args.coord_file, coord)
