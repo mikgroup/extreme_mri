@@ -14,11 +14,20 @@ To use GPUs, you will need to install `cupy`, a numpy-like package for CUDA, eit
 	pip install cupy
 	
 
+## Variables
+
+- `ksp`: kspace data array of shape [# of channels, # of TRs, readout lengths].
+- `coord`: kspace coordinate array of shape [# of TRs, readout lengths, # of dimensions].
+- `dcf`: density compensation factor of shape [# of TRs, readout lengths].
+- `mps`: sensitivity maps of shape [# of channels, nx, ny, ...]
+- `img`: reconstructed image of shape [# of frames, nx, ny, ...]
+
+
 ## Processing pipeline
 
 To run the reconstruction, the general pipeline is to:
 
-- convert the dataset to appropriate numpy arrays.
+- run setup script to folder with appropriate numpy arrays (`ksp.npy`, `coord.npy`, `dcf.npy`). (`setup.sh`).
 - automatically select FOV to account for leakage from slab selection (`autofov.py`).
 - perform gridding reconstruction to look at image (`gridding.py`).
 - estimate sensitivity maps using JSENSE (`jsense_recon.py`).
@@ -27,6 +36,7 @@ To run the reconstruction, the general pipeline is to:
 
 ## Example Usages
 
+	bash setup.sh path/to/numpy/arrays
 	python autofov.py $ksp $coord $dcf --device 0
 	python gridding_recon.py $ksp $coord $dcf $grd --device 0
 	python jsense_recon.py $ksp $coord $dcf $mps --device 0
