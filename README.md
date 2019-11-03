@@ -36,7 +36,7 @@ To run the reconstruction, the general pipeline is to:
 
 ## Example Usages
 
-	bash setup.sh path/to/numpy/arrays
+	source setup.sh path/to/numpy/arrays
 	python autofov.py $ksp $coord $dcf --device 0
 	python gridding_recon.py $ksp $coord $dcf $grd --device 0
 	python jsense_recon.py $ksp $coord $dcf $mps --device 0
