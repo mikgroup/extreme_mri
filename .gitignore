@@ -1,6 +1,5 @@
 *.npy
 *.mp4
-*.lowrank
-*.sh
+*.npz
 data
 __pycache__
