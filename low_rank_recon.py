@@ -152,7 +152,8 @@ class LowRankRecon(object):
                         self.alpha[j] *= self.beta
 
             if self.comm is None or self.comm.rank == 0:
-                return LowRankImage(self.L, self.R, self.img_shape)
+                return LowRankImage([sp.to_device(L_j) for L_j in self.L],
+                                    [sp.to_device(R_j) for R_j in self.R], self.img_shape)
 
     def _sgd(self):
         with tqdm(total=self.max_epoch * self.T,
