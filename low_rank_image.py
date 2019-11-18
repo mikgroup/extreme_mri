@@ -27,15 +27,23 @@ class LowRankImage(object):
         self.B = _get_B(img_shape, self.T, self.blk_widths)
         self.L = L
         self.R = R
-
+        self.device = sp.cpu_device
+        
+    def use_device(self, device):
+        self.device = sp.Device(device)
+        self.L = [sp.to_device(L_j, self.device) for L_j in self.L]
+        self.R = [sp.to_device(R_j, self.device) for R_j in self.R]
+        
     def __len__(self):
         return self.T
 
     def _get_img(self, t, idx=None):
-        img_t = 0
-        for j in range(self.J):
-            img_t += self.B[j](self.L[j] * self.R[j][t])[idx]
+        with self.device:
+            img_t = 0
+            for j in range(self.J):
+                img_t += self.B[j](self.L[j] * self.R[j][t])[idx]
 
+        img_t = sp.to_device(img_t, sp.cpu_device)
         return img_t
 
     def __getitem__(self, index):
