@@ -1,4 +1,5 @@
 import numpy as np
+import h5py
 import sigpy as sp
 from math import ceil
 
@@ -60,26 +61,25 @@ class LowRankImage(object):
                                  for t in range(self.T)[tslc]])
 
     def save(self, filename):
-        data = {}
-        data['J'] = self.J
-        for j in range(self.J):
-            data['L_{}'.format(j)] = self.L[j]
-            data['R_{}'.format(j)] = self.R[j]
+        with h5py.File(filename, 'w') as hf:
+            hf.attrs['J'] = self.J
+            for j in range(self.J):
+                hf.create_dataset('L_{}'.format(j), data=self.L[j])
+                hf.create_dataset('R_{}'.format(j), data=self.R[j])
 
-        data['img_shape'] = self.img_shape
-        np.savez_compressed(filename, **data)
+            hf.create_dataset('img_shape', data=self.img_shape)
 
     @classmethod
     def load(cls, filename):
-        with np.load(filename) as data:
-            J = data['J']
+        with h5py.File(filename, 'r') as hf:
+            J = hf.attrs['J']
             L = []
             R = []
             for j in range(J):
-                L.append(data['L_{}'.format(j)])
-                R.append(data['R_{}'.format(j)])
+                L.append(hf['L_{}'.format(j)][:])
+                R.append(hf['R_{}'.format(j)][:])
 
-            img_shape = data['img_shape']
+            img_shape = hf['img_shape'][:]
             return cls(L, R, img_shape)
 
 
