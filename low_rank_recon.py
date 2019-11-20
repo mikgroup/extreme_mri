@@ -160,8 +160,8 @@ class LowRankRecon(object):
 
     def _sgd(self):
         for epoch in range(self.max_epoch):
-            with tqdm(desc='Epoch {}/{}'.format(epoch, self.max_epoch), total=self.T,
-                      disable=not self.show_pbar, leave=True) as self.pbar:
+            with tqdm(desc='Epoch {}/{}'.format(epoch + 1, self.max_epoch),
+                      total=self.T, disable=not self.show_pbar, leave=True) as self.pbar:
                 for t in np.random.permutation(self.T):
                     loss_t = self._update(t)
 
