@@ -146,7 +146,7 @@ class LowRankRecon(object):
                     if self.show_pbar:
                         self.pbar.close()
                         self.pbar_i.close()
-                        print('Recon diverged, reducing step-size by {}'.format(
+                        tqdm.write('Recon diverged, reducing step-size by {}'.format(
                             self.beta))
 
                     for j in range(self.J):
