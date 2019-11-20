@@ -37,8 +37,7 @@ class LowRankRecon(object):
                  blk_widths=[32, 64, 128], beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
                  max_epoch=60, max_power_iter=10,
-                 show_pbar=True,
-                 save_objective_values=False):
+                 show_pbar=True, save_objective_values=False):
         self.ksp = ksp
         self.coord = coord
         self.dcf = dcf
@@ -130,11 +129,7 @@ class LowRankRecon(object):
                 L_j /= L_j_norm
                 L_j *= self.eps[j]
 
-                R_j = sp.randn((self.T, ) + L_j_norm.shape,
-                               dtype=self.dtype, device=self.device)
-                R_j_norm = self.xp.sum(self.xp.abs(R_j)**2, axis=0, keepdims=True)**0.5
-                R_j /= R_j_norm
-                R_j *= self.eps[j]
+                R_j = self.xp.zeros((self.T, ) + L_j_norm.shape, dtype=self.dtype)
 
                 self.L.append(L_j)
                 self.R.append(R_j)
@@ -148,23 +143,37 @@ class LowRankRecon(object):
                     self._sgd()
                     done = True
                 except OverflowError:
+                    if self.show_pbar:
+                        self.pbar.close()
+                        self.pbar_i.close()
+                        print('Recon diverged, reducing step-size by {}'.format(
+                            self.beta))
+
                     for j in range(self.J):
                         self.alpha[j] *= self.beta
 
             if self.comm is None or self.comm.rank == 0:
-                return LowRankImage([sp.to_device(L_j) for L_j in self.L],
-                                    [sp.to_device(R_j) for R_j in self.R], self.img_shape)
+                return LowRankImage(
+                    [sp.to_device(L_j, sp.cpu_device) for L_j in self.L],
+                    [sp.to_device(R_j, sp.cpu_device) for R_j in self.R],
+                    self.img_shape)
 
     def _sgd(self):
-        with tqdm(total=self.max_epoch * self.T,
-                  desc='LowRankRecon',
-                  disable=not self.show_pbar) as pbar:
+        with tqdm(total=self.max_epoch, desc='LowRankRecon',
+                  disable=not self.show_pbar) as self.pbar:
             for epoch in range(self.max_epoch):
-                for t in np.random.permutation(self.T):
-                    self._update(t)
+                loss = 0
+                with tqdm(total=self.T, disable=not self.show_pbar) as self.pbar_i:
+                    for t in np.random.permutation(self.T):
+                        loss_t = self._update(t)
 
-                    pbar.set_postfix(epoch=epoch, gnorm=self.gnorm)
-                    pbar.update()
+                        self.pbar_i.set_postfix(loss_t=loss_t)
+                        self.pbar_i.update()
+                        loss += loss_t**2
+
+                loss = (loss / self.T)**0.5
+                self.pbar.set_postfix(loss=loss)
+                self.pbar.update()
 
     def _update(self, t):
         # Download k-space arrays.
@@ -192,6 +201,8 @@ class LowRankRecon(object):
 
         if self.comm is not None:
             self.comm.allreduce(e_t)
+
+        loss_t = self.xp.linalg.norm(e_t).item()
 
         # Gradient update.
         self.gnorm = 0
@@ -226,7 +237,7 @@ class LowRankRecon(object):
         if np.isinf(self.gnorm) or np.isnan(self.gnorm):
             raise OverflowError
 
-        self.gnorm = self.gnorm**0.5
+        return loss_t
 
 
 def _get_B(img_shape, T, blk_widths, dtype=np.complex64):
