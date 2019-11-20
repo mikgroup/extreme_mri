@@ -145,9 +145,9 @@ class LowRankRecon(object):
                 except OverflowError:
                     if self.show_pbar:
                         self.pbar.close()
-                        self.pbar_i.close()
-                        tqdm.write('Recon diverged, reducing step-size by {}'.format(
-                            self.beta))
+                        tqdm.write(
+                            '\nRecon diverged. '
+                            'Reducing step-size by {} and restarting.'.format(self.beta))
 
                     for j in range(self.J):
                         self.alpha[j] *= self.beta
@@ -159,21 +159,14 @@ class LowRankRecon(object):
                     self.img_shape)
 
     def _sgd(self):
-        with tqdm(total=self.max_epoch, desc='LowRankRecon',
-                  disable=not self.show_pbar) as self.pbar:
-            for epoch in range(self.max_epoch):
-                loss = 0
-                with tqdm(total=self.T, disable=not self.show_pbar) as self.pbar_i:
-                    for t in np.random.permutation(self.T):
-                        loss_t = self._update(t)
+        for epoch in range(self.max_epoch):
+            with tqdm(desc='Epoch {}/{}'.format(epoch, self.max_epoch), total=self.T,
+                      disable=not self.show_pbar, leave=True) as self.pbar:
+                for t in np.random.permutation(self.T):
+                    loss_t = self._update(t)
 
-                        self.pbar_i.set_postfix(loss_t=loss_t)
-                        self.pbar_i.update()
-                        loss += loss_t**2
-
-                loss = (loss / self.T)**0.5
-                self.pbar.set_postfix(loss=loss)
-                self.pbar.update()
+                    self.pbar.set_postfix(loss_t=loss_t)
+                    self.pbar.update()
 
     def _update(self, t):
         # Download k-space arrays.
@@ -202,10 +195,9 @@ class LowRankRecon(object):
         if self.comm is not None:
             self.comm.allreduce(e_t)
 
-        loss_t = self.xp.linalg.norm(e_t).item()
+        loss_t = self.xp.linalg.norm(e_t).item()**2
 
         # Gradient update.
-        self.gnorm = 0
         for j in range(self.J):
             i_j, b_j, s_j, n_j, G_j = _get_bparams(
                 self.img_shape, self.T, self.blk_widths[j])
@@ -215,27 +207,30 @@ class LowRankRecon(object):
             g_L_j *= self.xp.conj(self.R[j][t])
             sp.axpy(g_L_j, self.lamda[j] / self.T, self.L[j])
             g_L_j *= self.T
-            self.gnorm += self.xp.linalg.norm(g_L_j)**2
+            loss_t += self.lamda[j] / self.T * self.xp.linalg.norm(self.L[j]).item()**2
 
             # R gradient.
             g_R_jt = self.B[j].H(e_t)
             g_R_jt *= self.xp.conj(self.L[j])
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
             if t > 0:
-                sp.axpy(g_R_jt, self.lamda[j] / 2, self.R[j][t] - self.R[j][t - 1])
+                D_jt = self.R[j][t] - self.R[j][t - 1]
+                sp.axpy(g_R_jt, self.lamda[j] / 2, D_jt)
+                loss_t += self.lamda[j] / 2 * self.xp.linalg.norm(D_jt).item()**2
 
             if t < self.T - 1:
-                sp.axpy(g_R_jt, self.lamda[j] / 2, self.R[j][t] - self.R[j][t + 1])
+                D_jt = self.R[j][t] - self.R[j][t + 1]
+                sp.axpy(g_R_jt, self.lamda[j] / 2, D_jt)
+                loss_t += self.lamda[j] / 2 * self.xp.linalg.norm(D_jt).item()**2
 
             g_R_jt *= self.T
-            self.gnorm += self.xp.linalg.norm(g_R_jt)**2
 
             # Update.
             sp.axpy(self.L[j], -self.alpha[j], g_L_j)
             sp.axpy(self.R[j][t], -self.alpha[j], g_R_jt)
 
-        if np.isinf(self.gnorm) or np.isnan(self.gnorm):
-            raise OverflowError
+            if np.isinf(loss_t) or np.isnan(loss_t):
+                raise OverflowError
 
         return loss_t
 
