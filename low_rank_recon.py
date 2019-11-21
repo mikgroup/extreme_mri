@@ -34,7 +34,7 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[32, 64, 128], beta=0.5, sgw=None,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, K=20, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
                  max_epoch=60, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
@@ -46,7 +46,9 @@ class LowRankRecon(object):
         self.blk_widths = blk_widths
         self.T = T
         self.lamda = lamda
+        self.alpha = alpha
         self.beta = beta
+        self.K = K
         self.device = sp.Device(device)
         self.comm = comm
         self.seed = seed
@@ -83,6 +85,7 @@ class LowRankRecon(object):
             max_eig = sp.app.MaxEig(F.H * W * F, max_iter=self.max_power_iter,
                                     dtype=self.dtype, device=self.device,
                                     show_pbar=self.show_pbar).run()
+            self.dcf /= max_eig
 
             # Estimate scaling.
             img_adj = 0
@@ -99,25 +102,13 @@ class LowRankRecon(object):
                 self.comm.allreduce(img_adj)
 
             img_adj_norm = self.xp.linalg.norm(img_adj).item()
-
-            lamda_global = self.lamda
-            sigma_global = img_adj_norm / max_eig / self.T**0.5 / self.J**0.5
-            G_global = sp.prod(self.img_shape)**0.5 + self.T**0.5
-            self.alpha = []
-            self.eps = []
-            self.lamda = []
-            for j in range(self.J):
-                i_j, b_j, s_j, n_j, G_j = _get_bparams(
-                    self.img_shape, self.T, self.blk_widths[j])
-                sigma_j = sigma_global * (G_j / G_global)
-                self.lamda.append(lamda_global * sigma_j * max_eig**0.5)
-                self.alpha.append(1 / (sigma_j * max_eig + self.lamda[j]))
-                self.eps.append(sigma_j**0.5)
+            self.ksp /= img_adj_norm
 
     def _init_LR(self):
         with self.device:
             self.L = []
             self.R = []
+            G_0 = sp.prod(self.img_shape)**0.5 + self.T**0.5
             for j in range(self.J):
                 i_j, b_j, s_j, n_j, G_j = _get_bparams(
                     self.img_shape, self.T, self.blk_widths[j])
@@ -127,9 +118,13 @@ class LowRankRecon(object):
                 L_j_norm = self.xp.sum(self.xp.abs(L_j)**2,
                                        axis=range(-self.D, 0), keepdims=True)**0.5
                 L_j /= L_j_norm
-                L_j *= self.eps[j]
+                L_j *= (G_j / G_0)**0.5
 
-                R_j = self.xp.zeros((self.T, ) + L_j_norm.shape, dtype=self.dtype)
+                R_j = sp.randn((self.T, ) + L_j_norm.shape,
+                               dtype=self.dtype, device=self.device)
+                R_j_norm = self.xp.sum(self.xp.abs(R_j)**2, axis=0, keepdims=True)**0.5
+                R_j /= R_j_norm
+                R_j *= (G_j / G_0)**0.5
 
                 self.L.append(L_j)
                 self.R.append(R_j)
@@ -143,14 +138,12 @@ class LowRankRecon(object):
                     self._sgd()
                     done = True
                 except OverflowError:
+                    self.alpha *= self.beta
                     if self.show_pbar:
                         self.pbar.close()
                         tqdm.write(
-                            '\nRecon diverged. '
-                            'Reducing step-size by {} and restarting.'.format(self.beta))
-
-                    for j in range(self.J):
-                        self.alpha[j] *= self.beta
+                            '\nReconstruction diverged. '
+                            'Restart with alpha={}.'.format(self.alpha))
 
             if self.comm is None or self.comm.rank == 0:
                 return LowRankImage(
@@ -168,6 +161,9 @@ class LowRankRecon(object):
                     self.pbar.set_postfix(loss_t=loss_t)
                     self.pbar.update()
 
+                if (epoch + 1) % self.K == 0:
+                    self.alpha *= self.beta
+
     def _update(self, t):
         # Download k-space arrays.
         tr_start = t * self.tr_per_frame
@@ -182,32 +178,37 @@ class LowRankRecon(object):
             img_t += self.B[j](self.L[j] * self.R[j][t])
 
         # Data consistency.
+        loss_t = 0
         e_t = 0
         for c in range(self.C):
             mps_c = sp.to_device(self.mps[c], self.device)
             e_tc = sp.nufft(img_t * mps_c, coord_t)
             e_tc -= ksp_t[c]
-            e_tc *= dcf_t
+            e_tc *= dcf_t**0.5
+            loss_t += self.xp.linalg.norm(e_tc)**2
+            e_tc *= dcf_t**0.5
             e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
             e_tc *= self.xp.conj(mps_c)
             e_t += e_tc
 
         if self.comm is not None:
             self.comm.allreduce(e_t)
+            self.comm.allreduce(loss_t)
 
-        loss_t = self.xp.linalg.norm(e_t).item()**2
-
+        loss_t = loss_t.item()
         # Gradient update.
+        G_0 = sp.prod(self.img_shape)**0.5 + self.T**0.5
         for j in range(self.J):
             i_j, b_j, s_j, n_j, G_j = _get_bparams(
                 self.img_shape, self.T, self.blk_widths[j])
+            lamda_j = self.lamda * G_j
 
             # L gradient.
             g_L_j = self.B[j].H(e_t)
             g_L_j *= self.xp.conj(self.R[j][t])
-            sp.axpy(g_L_j, self.lamda[j] / self.T, self.L[j])
+            sp.axpy(g_L_j, lamda_j / self.T, self.L[j])
             g_L_j *= self.T
-            loss_t += self.lamda[j] / self.T * self.xp.linalg.norm(self.L[j]).item()**2
+            loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
 
             # R gradient.
             g_R_jt = self.B[j].H(e_t)
@@ -215,19 +216,20 @@ class LowRankRecon(object):
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
             if t > 0:
                 D_jt = self.R[j][t] - self.R[j][t - 1]
-                sp.axpy(g_R_jt, self.lamda[j] / 2, D_jt)
-                loss_t += self.lamda[j] / 2 * self.xp.linalg.norm(D_jt).item()**2
+                sp.axpy(g_R_jt, lamda_j / 2, D_jt)
+                loss_t += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
 
             if t < self.T - 1:
                 D_jt = self.R[j][t] - self.R[j][t + 1]
-                sp.axpy(g_R_jt, self.lamda[j] / 2, D_jt)
-                loss_t += self.lamda[j] / 2 * self.xp.linalg.norm(D_jt).item()**2
+                sp.axpy(g_R_jt, lamda_j / 2, D_jt)
+                loss_t += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
 
             g_R_jt *= self.T
 
             # Update.
-            sp.axpy(self.L[j], -self.alpha[j], g_L_j)
-            sp.axpy(self.R[j][t], -self.alpha[j], g_R_jt)
+            alpha_j = self.alpha * (G_0 / G_j)
+            sp.axpy(self.L[j], -alpha_j, g_L_j)
+            sp.axpy(self.R[j][t], -alpha_j, g_R_jt)
 
             if np.isinf(loss_t) or np.isnan(loss_t):
                 raise OverflowError
@@ -318,10 +320,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG)
 
-    ksp = np.load(args.ksp_file, 'r')
+    ksp = np.load(args.ksp_file)
     coord = np.load(args.coord_file)
     dcf = np.load(args.dcf_file)
-    mps = np.load(args.mps_file, 'r')
+    mps = np.load(args.mps_file)
 
     comm = sp.Communicator()
     if args.multi_gpu:
