@@ -34,9 +34,9 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, K=20, sgw=None,
+                 blk_widths=[64, 128, 256], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
-                 max_epoch=60, max_power_iter=10,
+                 max_epoch=100, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
         self.ksp = ksp
         self.coord = coord
@@ -48,7 +48,6 @@ class LowRankRecon(object):
         self.lamda = lamda
         self.alpha = alpha
         self.beta = beta
-        self.K = K
         self.device = sp.Device(device)
         self.comm = comm
         self.seed = seed
@@ -93,8 +92,7 @@ class LowRankRecon(object):
             for c in range(self.C):
                 mps_c = sp.to_device(self.mps[c], self.device)
                 ksp_c = sp.to_device(self.ksp[c], self.device)
-                img_adj_c = sp.nufft_adjoint(
-                    ksp_c * dcf, self.coord, self.img_shape)
+                img_adj_c = sp.nufft_adjoint(ksp_c * dcf, self.coord, self.img_shape)
                 img_adj_c *= self.xp.conj(mps_c)
                 img_adj += img_adj_c
 
@@ -102,13 +100,12 @@ class LowRankRecon(object):
                 self.comm.allreduce(img_adj)
 
             img_adj_norm = self.xp.linalg.norm(img_adj).item()
-            self.ksp /= img_adj_norm
+            self.ksp *= (sp.prod(self.img_shape) * self.T)**0.5 / img_adj_norm
 
     def _init_LR(self):
         with self.device:
             self.L = []
             self.R = []
-            G_0 = sp.prod(self.img_shape)**0.5 + self.T**0.5
             for j in range(self.J):
                 i_j, b_j, s_j, n_j, G_j = _get_bparams(
                     self.img_shape, self.T, self.blk_widths[j])
@@ -118,13 +115,13 @@ class LowRankRecon(object):
                 L_j_norm = self.xp.sum(self.xp.abs(L_j)**2,
                                        axis=range(-self.D, 0), keepdims=True)**0.5
                 L_j /= L_j_norm
-                L_j *= (G_j / G_0)**0.5
+                L_j *= G_j**0.5
 
                 R_j = sp.randn((self.T, ) + L_j_norm.shape,
                                dtype=self.dtype, device=self.device)
                 R_j_norm = self.xp.sum(self.xp.abs(R_j)**2, axis=0, keepdims=True)**0.5
                 R_j /= R_j_norm
-                R_j *= (G_j / G_0)**0.5
+                R_j *= G_j**0.5
 
                 self.L.append(L_j)
                 self.R.append(R_j)
@@ -152,17 +149,15 @@ class LowRankRecon(object):
                     self.img_shape)
 
     def _sgd(self):
-        for epoch in range(self.max_epoch):
-            with tqdm(desc='Epoch {}/{}'.format(epoch + 1, self.max_epoch),
-                      total=self.T, disable=not self.show_pbar, leave=True) as self.pbar:
+        for self.epoch in range(self.max_epoch):
+            with tqdm(desc='Epoch {}/{}'.format(self.epoch + 1, self.max_epoch),
+                      total=self.T, disable=not self.show_pbar,
+                      leave=True) as self.pbar:
                 for t in np.random.permutation(self.T):
-                    loss_t = self._update(t)
+                    loss = self._update(t)
 
-                    self.pbar.set_postfix(loss_t=loss_t)
+                    self.pbar.set_postfix(loss=loss)
                     self.pbar.update()
-
-                if (epoch + 1) % self.K == 0:
-                    self.alpha *= self.beta
 
     def _update(self, t):
         # Download k-space arrays.
@@ -178,14 +173,14 @@ class LowRankRecon(object):
             img_t += self.B[j](self.L[j] * self.R[j][t])
 
         # Data consistency.
-        loss_t = 0
+        loss = 0
         e_t = 0
         for c in range(self.C):
             mps_c = sp.to_device(self.mps[c], self.device)
             e_tc = sp.nufft(img_t * mps_c, coord_t)
             e_tc -= ksp_t[c]
             e_tc *= dcf_t**0.5
-            loss_t += self.xp.linalg.norm(e_tc)**2
+            loss += self.xp.linalg.norm(e_tc)**2
             e_tc *= dcf_t**0.5
             e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
             e_tc *= self.xp.conj(mps_c)
@@ -193,11 +188,10 @@ class LowRankRecon(object):
 
         if self.comm is not None:
             self.comm.allreduce(e_t)
-            self.comm.allreduce(loss_t)
+            self.comm.allreduce(loss)
 
-        loss_t = loss_t.item()
+        loss = loss.item()
         # Gradient update.
-        G_0 = sp.prod(self.img_shape)**0.5 + self.T**0.5
         for j in range(self.J):
             i_j, b_j, s_j, n_j, G_j = _get_bparams(
                 self.img_shape, self.T, self.blk_widths[j])
@@ -208,7 +202,7 @@ class LowRankRecon(object):
             g_L_j *= self.xp.conj(self.R[j][t])
             sp.axpy(g_L_j, lamda_j / self.T, self.L[j])
             g_L_j *= self.T
-            loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
+            loss += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
 
             # R gradient.
             g_R_jt = self.B[j].H(e_t)
@@ -217,24 +211,23 @@ class LowRankRecon(object):
             if t > 0:
                 D_jt = self.R[j][t] - self.R[j][t - 1]
                 sp.axpy(g_R_jt, lamda_j / 2, D_jt)
-                loss_t += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
+                loss += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
 
             if t < self.T - 1:
                 D_jt = self.R[j][t] - self.R[j][t + 1]
                 sp.axpy(g_R_jt, lamda_j / 2, D_jt)
-                loss_t += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
-
-            g_R_jt *= self.T
+                loss += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
 
             # Update.
-            alpha_j = self.alpha * (G_0 / G_j)
+            alpha_j = self.alpha / G_j
             sp.axpy(self.L[j], -alpha_j, g_L_j)
             sp.axpy(self.R[j][t], -alpha_j, g_R_jt)
 
-            if np.isinf(loss_t) or np.isnan(loss_t):
+            if np.isinf(loss) or np.isnan(loss):
                 raise OverflowError
 
-        return loss_t
+        loss = loss * self.T / 2
+        return loss
 
 
 def _get_B(img_shape, T, blk_widths, dtype=np.complex64):
@@ -290,9 +283,9 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Low rank reconstruction.')
     parser.add_argument('--blk_widths', type=int, nargs='+',
-                        default=[32, 64, 128],
+                        default=[64, 128, 256],
                         help='Block widths for low rank.')
-    parser.add_argument('--max_epoch', type=int, default=60,
+    parser.add_argument('--max_epoch', type=int, default=100,
                         help='Maximum epochs.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
@@ -313,7 +306,7 @@ if __name__ == '__main__':
     parser.add_argument('T', type=int,
                         help='Number of frames.')
     parser.add_argument('lamda', type=float,
-                        help='Regularization. Recommend 1e-6 to start.')
+                        help='Regularization. Recommend 1e-2 to start.')
     parser.add_argument('img_file', type=str,
                         help='Output image file.')
 
