@@ -34,7 +34,7 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[64, 128, 256], alpha=1, beta=0.5, sgw=None,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, K=20, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
                  max_epoch=100, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
@@ -48,6 +48,7 @@ class LowRankRecon(object):
         self.lamda = lamda
         self.alpha = alpha
         self.beta = beta
+        self.K = K
         self.device = sp.Device(device)
         self.comm = comm
         self.seed = seed
@@ -153,9 +154,13 @@ class LowRankRecon(object):
             with tqdm(desc='Epoch {}/{}'.format(self.epoch + 1, self.max_epoch),
                       total=self.T, disable=not self.show_pbar,
                       leave=True) as self.pbar:
+                loss = 0
+                n = 0
                 for t in np.random.permutation(self.T):
-                    loss = self._update(t)
+                    loss_t = self._update(t)
 
+                    n += 1
+                    loss = loss * (n - 1) / n + loss_t / n
                     self.pbar.set_postfix(loss=loss)
                     self.pbar.update()
 
@@ -173,14 +178,14 @@ class LowRankRecon(object):
             img_t += self.B[j](self.L[j] * self.R[j][t])
 
         # Data consistency.
-        loss = 0
+        loss_t = 0
         e_t = 0
         for c in range(self.C):
             mps_c = sp.to_device(self.mps[c], self.device)
             e_tc = sp.nufft(img_t * mps_c, coord_t)
             e_tc -= ksp_t[c]
             e_tc *= dcf_t**0.5
-            loss += self.xp.linalg.norm(e_tc)**2
+            loss_t += self.xp.linalg.norm(e_tc)**2
             e_tc *= dcf_t**0.5
             e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
             e_tc *= self.xp.conj(mps_c)
@@ -188,9 +193,9 @@ class LowRankRecon(object):
 
         if self.comm is not None:
             self.comm.allreduce(e_t)
-            self.comm.allreduce(loss)
+            self.comm.allreduce(loss_t)
 
-        loss = loss.item()
+        loss_t = loss_t.item()
         # Gradient update.
         for j in range(self.J):
             i_j, b_j, s_j, n_j, G_j = _get_bparams(
@@ -202,7 +207,7 @@ class LowRankRecon(object):
             g_L_j *= self.xp.conj(self.R[j][t])
             sp.axpy(g_L_j, lamda_j / self.T, self.L[j])
             g_L_j *= self.T
-            loss += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
+            loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
 
             # R gradient.
             g_R_jt = self.B[j].H(e_t)
@@ -211,23 +216,24 @@ class LowRankRecon(object):
             if t > 0:
                 D_jt = self.R[j][t] - self.R[j][t - 1]
                 sp.axpy(g_R_jt, lamda_j / 2, D_jt)
-                loss += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
+                loss_t += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
 
             if t < self.T - 1:
                 D_jt = self.R[j][t] - self.R[j][t + 1]
                 sp.axpy(g_R_jt, lamda_j / 2, D_jt)
-                loss += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
+                loss_t += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
 
             # Update.
-            alpha_j = self.alpha / G_j
-            sp.axpy(self.L[j], -alpha_j, g_L_j)
-            sp.axpy(self.R[j][t], -alpha_j, g_R_jt)
+            alpha_L_j = self.alpha / G_j * self.beta**(self.epoch // self.K)
+            alpha_R_j = self.alpha / G_j
+            sp.axpy(self.L[j], -alpha_L_j, g_L_j)
+            sp.axpy(self.R[j][t], -alpha_R_j, g_R_jt)
 
-            if np.isinf(loss) or np.isnan(loss):
+            if np.isinf(loss_t) or np.isnan(loss_t):
                 raise OverflowError
 
-        loss = loss * self.T / 2
-        return loss
+        loss_t = loss_t * self.T / 2
+        return loss_t
 
 
 def _get_B(img_shape, T, blk_widths, dtype=np.complex64):
@@ -283,7 +289,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Low rank reconstruction.')
     parser.add_argument('--blk_widths', type=int, nargs='+',
-                        default=[64, 128, 256],
+                        default=[32, 64, 128],
                         help='Block widths for low rank.')
     parser.add_argument('--max_epoch', type=int, default=100,
                         help='Maximum epochs.')
