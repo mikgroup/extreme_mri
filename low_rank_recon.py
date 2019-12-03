@@ -34,7 +34,7 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, K=20, sgw=None,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
                  max_epoch=100, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
@@ -48,7 +48,6 @@ class LowRankRecon(object):
         self.lamda = lamda
         self.alpha = alpha
         self.beta = beta
-        self.K = K
         self.device = sp.Device(device)
         self.comm = comm
         self.seed = seed
@@ -224,7 +223,7 @@ class LowRankRecon(object):
                 loss_t += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
 
             # Update.
-            alpha_L_j = self.alpha / G_j * self.beta**(self.epoch // self.K)
+            alpha_L_j = self.alpha / G_j
             alpha_R_j = self.alpha / G_j
             sp.axpy(self.L[j], -alpha_L_j, g_L_j)
             sp.axpy(self.R[j][t], -alpha_R_j, g_R_jt)
@@ -319,10 +318,10 @@ if __name__ == '__main__':
     args = parser.parse_args()
     logging.basicConfig(level=logging.DEBUG)
 
-    ksp = np.load(args.ksp_file)
+    ksp = np.load(args.ksp_file, 'r')
     coord = np.load(args.coord_file)
     dcf = np.load(args.dcf_file)
-    mps = np.load(args.mps_file)
+    mps = np.load(args.mps_file, 'r')
 
     comm = sp.Communicator()
     if args.multi_gpu:
@@ -336,8 +335,8 @@ if __name__ == '__main__':
         sgw = None
 
     # Split between nodes.
-    ksp = np.array_split(ksp, comm.size)[comm.rank]
-    mps = np.array_split(mps, comm.size)[comm.rank]
+    ksp = np.array_split(ksp, comm.size)[comm.rank].copy()
+    mps = np.array_split(mps, comm.size)[comm.rank].copy()
 
     img = LowRankRecon(ksp, coord, dcf, mps,
                        sgw=sgw,
