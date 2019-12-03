@@ -35,7 +35,7 @@ class LowRankRecon(object):
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
-                 device=sp.cpu_device, comm=None, seed=0,
+                 device=sp.cpu_device, comm=None, seed=0, eps=0.001,
                  max_epoch=100, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
         self.ksp = ksp
@@ -43,6 +43,7 @@ class LowRankRecon(object):
         self.dcf = dcf
         self.mps = mps
         self.sgw = sgw
+        self.eps = eps
         self.blk_widths = blk_widths
         self.T = T
         self.lamda = lamda
@@ -115,13 +116,13 @@ class LowRankRecon(object):
                 L_j_norm = self.xp.sum(self.xp.abs(L_j)**2,
                                        axis=range(-self.D, 0), keepdims=True)**0.5
                 L_j /= L_j_norm
-                L_j *= G_j**0.5
+                L_j *= G_j**0.5 * self.eps
 
                 R_j = sp.randn((self.T, ) + L_j_norm.shape,
                                dtype=self.dtype, device=self.device)
                 R_j_norm = self.xp.sum(self.xp.abs(R_j)**2, axis=0, keepdims=True)**0.5
                 R_j /= R_j_norm
-                R_j *= G_j**0.5
+                R_j *= G_j**0.5 * self.eps
 
                 self.L.append(L_j)
                 self.R.append(R_j)
