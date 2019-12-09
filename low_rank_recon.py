@@ -34,7 +34,7 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
+                 blk_widths=[50, 100, 200], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0, eps=0.001,
                  max_epoch=100, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
@@ -111,15 +111,19 @@ class LowRankRecon(object):
                 i_j, b_j, s_j, n_j, G_j = _get_bparams(
                     self.img_shape, self.T, self.blk_widths[j])
 
-                L_j = sp.randn(self.B[j].ishape,
-                               dtype=self.dtype, device=self.device)
+                L_j_shape = self.B[j].ishape
+                L_j = self.xp.random.standard_normal(L_j_shape).astype(self.dtype)
+                sp.axpy(L_j, 1j,
+                        self.xp.random.standard_normal(L_j_shape).astype(self.dtype))
                 L_j_norm = self.xp.sum(self.xp.abs(L_j)**2,
                                        axis=range(-self.D, 0), keepdims=True)**0.5
                 L_j /= L_j_norm
                 L_j *= G_j**0.5 * self.eps
 
-                R_j = sp.randn((self.T, ) + L_j_norm.shape,
-                               dtype=self.dtype, device=self.device)
+                R_j_shape = (self.T, ) + L_j_norm.shape
+                R_j = self.xp.random.standard_normal(R_j_shape).astype(self.dtype)
+                sp.axpy(R_j, 1j,
+                        self.xp.random.standard_normal(R_j_shape).astype(self.dtype))
                 R_j_norm = self.xp.sum(self.xp.abs(R_j)**2, axis=0, keepdims=True)**0.5
                 R_j /= R_j_norm
                 R_j *= G_j**0.5 * self.eps
@@ -213,21 +217,13 @@ class LowRankRecon(object):
             g_R_jt = self.B[j].H(e_t)
             g_R_jt *= self.xp.conj(self.L[j])
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
-            if t > 0:
-                D_jt = self.R[j][t] - self.R[j][t - 1]
-                sp.axpy(g_R_jt, lamda_j / 2, D_jt)
-                loss_t += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
-
-            if t < self.T - 1:
-                D_jt = self.R[j][t] - self.R[j][t + 1]
-                sp.axpy(g_R_jt, lamda_j / 2, D_jt)
-                loss_t += lamda_j / 2 * self.xp.linalg.norm(D_jt).item()**2
+            sp.axpy(g_R_jt, lamda_j, self.R[j][t])
+            loss_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
 
             # Update.
-            alpha_L_j = self.alpha / G_j
-            alpha_R_j = self.alpha / G_j
-            sp.axpy(self.L[j], -alpha_L_j, g_L_j)
-            sp.axpy(self.R[j][t], -alpha_R_j, g_R_jt)
+            alpha_j = self.alpha / G_j
+            sp.axpy(self.L[j], -alpha_j, g_L_j)
+            sp.axpy(self.R[j][t], -alpha_j, g_R_jt)
 
             if np.isinf(loss_t) or np.isnan(loss_t):
                 raise OverflowError
@@ -289,8 +285,10 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Low rank reconstruction.')
     parser.add_argument('--blk_widths', type=int, nargs='+',
-                        default=[32, 64, 128],
+                        default=[50, 100, 200],
                         help='Block widths for low rank.')
+    parser.add_argument('--alpha', type=float, default=1,
+                        help='Step-size')
     parser.add_argument('--max_epoch', type=int, default=100,
                         help='Maximum epochs.')
     parser.add_argument('--device', type=int, default=-1,
@@ -342,7 +340,7 @@ if __name__ == '__main__':
     img = LowRankRecon(ksp, coord, dcf, mps,
                        sgw=sgw,
                        blk_widths=args.blk_widths,
-                       T=args.T,
+                       T=args.T, alpha=args.alpha,
                        lamda=args.lamda,
                        max_epoch=args.max_epoch,
                        device=device, comm=comm).run()
