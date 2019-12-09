@@ -45,16 +45,16 @@ class MotionResolvedRecon(object):
     def _normalize(self):
         # Normalize using first phase.
         with device:
-            bimg_adj = 0
+            mrimg_adj = 0
             for c in range(self.C):
-                bimg_c = sp.nufft_adjoint(
+                mrimg_c = sp.nufft_adjoint(
                     self.bksp[0][c] * self.bdcf[0], self.bcoord[0],
                     self.img_shape)
-                bimg_c *= self.xp.conj(sp.to_device(mps[c], device))
-                bimg_adj += bimg_c
+                mrimg_c *= self.xp.conj(sp.to_device(mps[c], device))
+                mrimg_adj += mrimg_c
 
             if comm is not None:
-                comm.allreduce(bimg_adj)
+                comm.allreduce(mrimg_adj)
 
             # Get maximum eigenvalue.
             F = sp.linop.NUFFT(self.img_shape, self.bcoord[0])
@@ -66,18 +66,18 @@ class MotionResolvedRecon(object):
 
             # Normalize
             self.alpha /= max_eig
-            self.lamda *= max_eig * self.xp.abs(bimg_adj).max().item()
+            self.lamda *= max_eig * self.xp.abs(mrimg_adj).max().item()
 
-    def gradf(self, bimg):
-        out = self.xp.zeros_like(bimg)
+    def gradf(self, mrimg):
+        out = self.xp.zeros_like(mrimg)
         for b in range(self.B):
             for c in range(self.C):
                 mps_c = sp.to_device(self.mps[c], self.device)
                 out[b] += sp.nufft_adjoint(
-                    self.bdcf[b] * (sp.nufft(bimg[b] * mps_c, self.bcoord[b])
+                    self.bdcf[b] * (sp.nufft(mrimg[b] * mps_c, self.bcoord[b])
                                     - self.bksp[b][c]),
                     self.bcoord[b],
-                    oshape=bimg.shape[1:]) * self.xp.conj(mps_c)
+                    oshape=mrimg.shape[1:]) * self.xp.conj(mps_c)
 
         if self.comm is not None:
             self.comm.allreduce(out)
@@ -85,11 +85,11 @@ class MotionResolvedRecon(object):
         eps = 1e-31
         for b in range(self.B):
             if b > 0:
-                diff = bimg[b] - bimg[b - 1]
+                diff = mrimg[b] - mrimg[b - 1]
                 sp.axpy(out[b], self.lamda, diff / (self.xp.abs(diff) + eps))
 
             if b < self.B - 1:
-                diff = bimg[b] - bimg[b + 1]
+                diff = mrimg[b] - mrimg[b + 1]
                 sp.axpy(out[b], self.lamda, diff / (self.xp.abs(diff) + eps))
 
         return out
@@ -101,11 +101,11 @@ class MotionResolvedRecon(object):
                 with tqdm(total=self.max_iter, desc='MotionResolvedRecon',
                           disable=not self.show_pbar) as pbar:
                     with self.device:
-                        bimg = self.xp.zeros([self.B] + self.img_shape,
+                        mrimg = self.xp.zeros([self.B] + self.img_shape,
                                              dtype=self.mps.dtype)
                         for it in range(self.max_iter):
-                            g = self.gradf(bimg)
-                            sp.axpy(bimg, -self.alpha, g)
+                            g = self.gradf(mrimg)
+                            sp.axpy(mrimg, -self.alpha, g)
 
                             gnorm = self.xp.linalg.norm(g.ravel()).item()
                             if np.isnan(gnorm) or np.isinf(gnorm):
@@ -118,7 +118,7 @@ class MotionResolvedRecon(object):
             except OverflowError:
                 self.alpha *= self.beta
 
-        return bimg
+        return mrimg
 
 
 if __name__ == '__main__':
@@ -147,7 +147,7 @@ if __name__ == '__main__':
                         help='Respiratory signal file.')
     parser.add_argument('B', type=int,
                         help='Number of frames.')
-    parser.add_argument('bimg_file', type=str,
+    parser.add_argument('mrimg_file', type=str,
                         help='Output image file.')
 
     args = parser.parse_args()
@@ -168,10 +168,10 @@ if __name__ == '__main__':
     # Split between nodes.
     ksp = ksp[comm.rank::comm.size]
     mps = mps[comm.rank::comm.size]
-    bimg = MotionResolvedRecon(ksp, coord, dcf, mps, resp, args.B,
+    mrimg = MotionResolvedRecon(ksp, coord, dcf, mps, resp, args.B,
                                max_iter=args.max_iter, lamda=args.lamda,
                                device=device, comm=comm).run()
 
     if comm.rank == 0:
-        xp = sp.get_array_module(bimg)
-        xp.save(args.bimg_file, bimg)
+        xp = sp.get_array_module(mrimg)
+        xp.save(args.mrimg_file, mrimg)

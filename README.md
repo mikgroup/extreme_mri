@@ -19,8 +19,8 @@ To use GPUs, you will need to install `cupy`, a numpy-like package for CUDA, eit
 - `ksp`: kspace data array of shape [# of channels, # of TRs, readout lengths].
 - `coord`: kspace coordinate array of shape [# of TRs, readout lengths, # of dimensions].
 - `dcf`: density compensation factor of shape [# of TRs, readout lengths].
-- `mps`: sensitivity maps of shape [# of channels, nx, ny, ...]
-- `img`: reconstructed image of shape [# of frames, nx, ny, ...]
+- `mps`: sensitivity maps of shape [# of channels, nx, ny, nz]
+- `img`: reconstructed image of shape [# of frames, nx, ny, nz]
 
 
 ## Processing pipeline
@@ -36,8 +36,18 @@ To run the reconstruction, the general pipeline is to:
 
 ## Example Usages
 
+Preprocessing
+
 	source setup.sh path/to/numpy/arrays
 	python autofov.py $ksp $coord $dcf --device 0
-	python gridding_recon.py $ksp $coord $dcf $grd --device 0
 	python jsense_recon.py $ksp $coord $dcf $mps --device 0
+	
+	
+Low rank reconstruction with 30 frames
+
 	python low_rank_recon.py $ksp $coord $dcf $mps 30 $img --device 0
+
+
+Motion resolved reconstruction with 5 bin
+
+	python motion_resolved_recon.py $ksp $coord $dcf $mps 5 $mrimg --device 0
