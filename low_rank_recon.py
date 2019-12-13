@@ -34,8 +34,9 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[50, 100, 200], alpha=1, beta=0.5, sgw=None,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0, eps=1e-5,
+                 mu=1e-3, gamma=1e-2,
                  max_epoch=100, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
         self.ksp = ksp
@@ -44,6 +45,8 @@ class LowRankRecon(object):
         self.mps = mps
         self.sgw = sgw
         self.eps = eps
+        self.mu = mu
+        self.gamma = gamma
         self.blk_widths = blk_widths
         self.T = T
         self.lamda = lamda
@@ -178,8 +181,11 @@ class LowRankRecon(object):
 
         # Form image.
         img_t = 0
+        d_time = 0
         for j in range(self.J):
             img_t += self.B[j](self.L[j] * self.R[j][t])
+            if t > 0:
+                d_time += self.B[j](self.L[j] * (self.R[j][t] - self.R[j][t - 1]))
 
         # Data consistency.
         loss_t = 0
@@ -200,6 +206,18 @@ class LowRankRecon(object):
             self.comm.allreduce(loss_t)
 
         loss_t = loss_t.item()
+
+        # Total variation.
+        D = sp.linop.FiniteDifference(self.img_shape)
+        d_space = D(img_t)
+
+        tv_t = self.xp.sum((self.mu * self.xp.abs(d_space))**2, axis=0)
+        tv_t += (self.gamma * self.xp.abs(d_time))**2
+        tv_t = tv_t**0.5
+        loss_t += self.xp.sum(tv_t).item()
+        tv_t[tv_t == 0] = 1
+        e_t += (self.mu**2 * D.H(d_space) + self.gamma**2 * d_time) / tv_t
+
         # Gradient update.
         for j in range(self.J):
             i_j, b_j, s_j, n_j, G_j = _get_bparams(
@@ -285,7 +303,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Low rank reconstruction.')
     parser.add_argument('--blk_widths', type=int, nargs='+',
-                        default=[50, 100, 200],
+                        default=[32, 64, 128],
                         help='Block widths for low rank.')
     parser.add_argument('--alpha', type=float, default=1,
                         help='Step-size')
