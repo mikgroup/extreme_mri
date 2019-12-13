@@ -33,7 +33,7 @@ class LowRankRecon(object):
         J (int): number of multi-scale levels.
 
     """
-    def __init__(self, ksp, coord, dcf, mps, T, lamda, mu, gamma,
+    def __init__(self, ksp, coord, dcf, mps, T, lamda, mu,
                  blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0, eps=1e-5,
                  max_epoch=100, max_power_iter=10,
@@ -45,7 +45,6 @@ class LowRankRecon(object):
         self.sgw = sgw
         self.eps = eps
         self.mu = mu
-        self.gamma = gamma
         self.blk_widths = blk_widths
         self.T = T
         self.lamda = lamda
@@ -210,12 +209,13 @@ class LowRankRecon(object):
         D = sp.linop.FiniteDifference(self.img_shape)
         d_space = D(img_t)
 
-        tv_t = self.xp.sum((self.mu * self.xp.abs(d_space))**2, axis=0)
-        tv_t += (self.gamma * self.xp.abs(d_time))**2
+        tv_t = self.xp.sum(self.xp.abs(d_space)**2, axis=0)
+        tv_t += self.xp.abs(d_time)**2
         tv_t = tv_t**0.5
-        loss_t += self.xp.sum(tv_t).item()
+        loss_t += self.mu * self.xp.sum(tv_t).item()
+
         tv_t[tv_t == 0] = 1
-        e_t += (self.mu**2 * D.H(d_space) + self.gamma**2 * d_time) / tv_t
+        sp.axpy(e_t, self.mu, (D.H(d_space) + d_time) / tv_t)
 
         # Gradient update.
         for j in range(self.J):
@@ -329,9 +329,7 @@ if __name__ == '__main__':
     parser.add_argument('lamda', type=float,
                         help='Regularization. Recommend 1e-4 to start.')
     parser.add_argument('mu', type=float,
-                        help='Spatial TV Regularization. Recommend 1e-3 to start.')
-    parser.add_argument('gamma', type=float,
-                        help='Temporal TV Regularization. Recommend 1e-2 to start.')
+                        help='TV Regularization. Recommend 1e-3 to start.')
     parser.add_argument('img_file', type=str,
                         help='Output image file.')
 
@@ -359,7 +357,7 @@ if __name__ == '__main__':
     mps = np.array_split(mps, comm.size)[comm.rank].copy()
 
     img = LowRankRecon(ksp, coord, dcf, mps, args.T,
-                       args.lamda, args.mu, args.gamma,
+                       args.lamda, args.mu,
                        sgw=sgw,
                        blk_widths=args.blk_widths,
                        alpha=args.alpha,
