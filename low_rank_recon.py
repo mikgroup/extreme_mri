@@ -33,10 +33,9 @@ class LowRankRecon(object):
         J (int): number of multi-scale levels.
 
     """
-    def __init__(self, ksp, coord, dcf, mps, T, lamda,
+    def __init__(self, ksp, coord, dcf, mps, T, lamda, mu, gamma,
                  blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0, eps=1e-5,
-                 mu=1e-3, gamma=1e-2,
                  max_epoch=100, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
         self.ksp = ksp
@@ -328,7 +327,11 @@ if __name__ == '__main__':
     parser.add_argument('T', type=int,
                         help='Number of frames.')
     parser.add_argument('lamda', type=float,
-                        help='Regularization. Recommend 1e-2 to start.')
+                        help='Regularization. Recommend 1e-4 to start.')
+    parser.add_argument('mu', type=float,
+                        help='Spatial TV Regularization. Recommend 1e-3 to start.')
+    parser.add_argument('gamma', type=float,
+                        help='Temporal TV Regularization. Recommend 1e-2 to start.')
     parser.add_argument('img_file', type=str,
                         help='Output image file.')
 
@@ -355,11 +358,10 @@ if __name__ == '__main__':
     ksp = np.array_split(ksp, comm.size)[comm.rank].copy()
     mps = np.array_split(mps, comm.size)[comm.rank].copy()
 
-    img = LowRankRecon(ksp, coord, dcf, mps,
+    img = LowRankRecon(ksp, coord, dcf, mps, args.lamda, args.mu, args.gamma,
                        sgw=sgw,
                        blk_widths=args.blk_widths,
                        T=args.T, alpha=args.alpha,
-                       lamda=args.lamda,
                        max_epoch=args.max_epoch,
                        device=device, comm=comm).run()
 
