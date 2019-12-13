@@ -358,10 +358,11 @@ if __name__ == '__main__':
     ksp = np.array_split(ksp, comm.size)[comm.rank].copy()
     mps = np.array_split(mps, comm.size)[comm.rank].copy()
 
-    img = LowRankRecon(ksp, coord, dcf, mps, args.lamda, args.mu, args.gamma,
+    img = LowRankRecon(ksp, coord, dcf, mps, args.T,
+                       args.lamda, args.mu, args.gamma,
                        sgw=sgw,
                        blk_widths=args.blk_widths,
-                       T=args.T, alpha=args.alpha,
+                       alpha=args.alpha,
                        max_epoch=args.max_epoch,
                        device=device, comm=comm).run()
 
