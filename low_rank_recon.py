@@ -178,10 +178,8 @@ class LowRankRecon(object):
 
         # Form image.
         img_t = 0
-        d_time = 0
         for j in range(self.J):
             img_t += self.B[j](self.L[j] * self.R[j][t])
-            d_time += self.B[j](self.L[j] * (self.R[j][t] - self.R[j][max(t - 1, 0)]))
 
         # Data consistency.
         loss_t = 0
@@ -203,34 +201,28 @@ class LowRankRecon(object):
 
         loss_t = loss_t.item()
 
-        # Total variation.
-        D = sp.linop.FiniteDifference(self.img_shape)
-        d_space = D(img_t)
-
-        tv_t = self.xp.sum(self.xp.abs(d_space)**2, axis=0)
-        tv_t += self.xp.abs(d_time)**2
-        tv_t = tv_t**0.5
-        loss_t += self.lamda * self.xp.sum(tv_t).item()
-        tv_t[tv_t == 0] = 1
-        sp.axpy(e_t, self.lamda, (D.H(d_space) + 2 * d_time) / tv_t)
-
         # Gradient update.
         for j in range(self.J):
             i_j, b_j, s_j, n_j, G_j = _get_bparams(
                 self.img_shape, self.T, self.blk_widths[j])
+            lamda_j = self.lamda * G_j
+            alpha_j = self.alpha / G_j
 
             # L gradient.
             g_L_j = self.B[j].H(e_t)
             g_L_j *= self.xp.conj(self.R[j][t])
+            sp.axpy(g_L_j, lamda_j / self.T, self.L[j])
             g_L_j *= self.T
+            loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
 
             # R gradient.
             g_R_jt = self.B[j].H(e_t)
             g_R_jt *= self.xp.conj(self.L[j])
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
+            sp.axpy(g_R_jt, lamda_j, self.R[j][t])
+            loss_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
 
             # Update.
-            alpha_j = self.alpha / G_j
             sp.axpy(self.L[j], -alpha_j, g_L_j)
             sp.axpy(self.R[j][t], -alpha_j, g_R_jt)
 
@@ -283,7 +275,10 @@ def _get_bparams(img_shape, T, blk_width):
            for i, b, s in zip(img_shape, b_j, s_j)]
     n_j = [(i - b + s) // s for i, b, s in zip(i_j, b_j, s_j)]
 
-    M_j = sp.prod(b_j)
+    M_j = 1
+    for d in range(len(img_shape)):
+        M_j *= np.sum(sp.triang(b_j[d])**2)
+
     P_j = sp.prod(n_j)
     G_j = M_j**0.5 + T**0.5 + (2 * np.log(P_j))**0.5
 
