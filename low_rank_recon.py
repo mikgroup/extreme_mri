@@ -149,9 +149,8 @@ class LowRankRecon(object):
                     self.alpha *= self.beta
                     if self.show_pbar:
                         self.pbar.close()
-                        tqdm.write(
-                            '\nReconstruction diverged. '
-                            'Restart with alpha={}.'.format(self.alpha))
+                        tqdm.write('\nReconstruction diverged. '
+                                   'Restart with alpha={}.'.format(self.alpha))
 
             if self.comm is None or self.comm.rank == 0:
                 return LowRankImage(
@@ -242,9 +241,6 @@ class LowRankRecon(object):
             sp.axpy(g_R_ref_jt, lamda_j / self.C, self.R_ref[j][t])
             self.gradf_R_ref[j][t] += g_R_ref_jt
             loss_tc += lamda_j / self.C * self.xp.linalg.norm(self.R_ref[j]).item()**2
-
-            if np.isinf(loss_tc) or np.isnan(loss_tc):
-                raise OverflowError
 
         loss_tc /= 2
         return loss_tc
@@ -348,6 +344,10 @@ class LowRankRecon(object):
             alpha_j = self.alpha / G_j
             sp.axpy(self.L[j], -alpha_j, self.gradf_L_ref[j] - g_L_ref_j)
             sp.axpy(self.R[j][t], -alpha_j, self.gradf_R_ref[j][t] - g_R_ref_jt)
+
+            if (self.xp.isinf(self.L[j]).any() or self.xp.isnan(self.L[j]).any() or
+                self.xp.isinf(self.R[j][t]).any() or self.xp.isnan(self.R[j][t]).any()):
+                raise OverflowError
 
 
 def _get_B(img_shape, T, blk_widths, dtype=np.complex64):
