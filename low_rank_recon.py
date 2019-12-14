@@ -33,8 +33,8 @@ class LowRankRecon(object):
         J (int): number of multi-scale levels.
 
     """
-    def __init__(self, ksp, coord, dcf, mps, T, lamda, mu,
-                 blk_widths=[50, 100, 200], alpha=1, beta=0.5, sgw=None,
+    def __init__(self, ksp, coord, dcf, mps, T, lamda,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0, eps=1e-3,
                  max_epoch=100, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
@@ -44,7 +44,6 @@ class LowRankRecon(object):
         self.mps = mps
         self.sgw = sgw
         self.eps = eps
-        self.mu = mu
         self.blk_widths = blk_widths
         self.T = T
         self.lamda = lamda
@@ -73,9 +72,9 @@ class LowRankRecon(object):
         if self.sgw is not None:
             self.dcf *= np.expand_dims(self.sgw, -1)
 
-        self._init_scaling()
+        self._normalize()
 
-    def _init_scaling(self):
+    def _normalize(self):
         with self.device:
             # Estimate maximum eigenvalue.
             coord_t = sp.to_device(self.coord[:self.tr_per_frame], self.device)
@@ -119,7 +118,7 @@ class LowRankRecon(object):
                 L_j_norm = self.xp.sum(self.xp.abs(L_j)**2,
                                        axis=range(-self.D, 0), keepdims=True)**0.5
                 L_j /= L_j_norm
-                L_j *= G_j**0.5 * self.eps
+                L_j *= self.eps
 
                 R_j_shape = (self.T, ) + L_j_norm.shape
                 R_j = self.xp.random.standard_normal(R_j_shape).astype(self.dtype)
@@ -127,7 +126,7 @@ class LowRankRecon(object):
                         self.xp.random.standard_normal(R_j_shape).astype(self.dtype))
                 R_j_norm = self.xp.sum(self.xp.abs(R_j)**2, axis=0, keepdims=True)**0.5
                 R_j /= R_j_norm
-                R_j *= G_j**0.5 * self.eps
+                R_j *= self.eps
 
                 self.L.append(L_j)
                 self.R.append(R_j)
@@ -182,8 +181,7 @@ class LowRankRecon(object):
         d_time = 0
         for j in range(self.J):
             img_t += self.B[j](self.L[j] * self.R[j][t])
-            if t > 0:
-                d_time += self.B[j](self.L[j] * (self.R[j][t] - self.R[j][t - 1]))
+            d_time += self.B[j](self.L[j] * (self.R[j][t] - self.R[j][max(t - 1, 0)]))
 
         # Data consistency.
         loss_t = 0
@@ -212,30 +210,24 @@ class LowRankRecon(object):
         tv_t = self.xp.sum(self.xp.abs(d_space)**2, axis=0)
         tv_t += self.xp.abs(d_time)**2
         tv_t = tv_t**0.5
-        loss_t += self.mu * self.xp.sum(tv_t).item()
-
+        loss_t += self.lamda * self.xp.sum(tv_t).item()
         tv_t[tv_t == 0] = 1
-        sp.axpy(e_t, self.mu, (D.H(d_space) + d_time) / tv_t)
+        sp.axpy(e_t, self.lamda, (D.H(d_space) + 2 * d_time) / tv_t)
 
         # Gradient update.
         for j in range(self.J):
             i_j, b_j, s_j, n_j, G_j = _get_bparams(
                 self.img_shape, self.T, self.blk_widths[j])
-            lamda_j = self.lamda * G_j
 
             # L gradient.
             g_L_j = self.B[j].H(e_t)
             g_L_j *= self.xp.conj(self.R[j][t])
-            sp.axpy(g_L_j, lamda_j / self.T, self.L[j])
             g_L_j *= self.T
-            loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
 
             # R gradient.
             g_R_jt = self.B[j].H(e_t)
             g_R_jt *= self.xp.conj(self.L[j])
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
-            sp.axpy(g_R_jt, lamda_j, self.R[j][t])
-            loss_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
 
             # Update.
             alpha_j = self.alpha / G_j
@@ -302,7 +294,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Low rank reconstruction.')
     parser.add_argument('--blk_widths', type=int, nargs='+',
-                        default=[50, 100, 200],
+                        default=[32, 64, 128],
                         help='Block widths for low rank.')
     parser.add_argument('--alpha', type=float, default=1,
                         help='Step-size')
@@ -328,8 +320,6 @@ if __name__ == '__main__':
                         help='Number of frames.')
     parser.add_argument('lamda', type=float,
                         help='Regularization. Recommend 1e-4 to start.')
-    parser.add_argument('mu', type=float,
-                        help='TV Regularization. Recommend 1e-3 to start.')
     parser.add_argument('img_file', type=str,
                         help='Output image file.')
 
@@ -357,7 +347,7 @@ if __name__ == '__main__':
     mps = np.array_split(mps, comm.size)[comm.rank].copy()
 
     img = LowRankRecon(ksp, coord, dcf, mps, args.T,
-                       args.lamda, args.mu,
+                       args.lamda,
                        sgw=sgw,
                        blk_widths=args.blk_widths,
                        alpha=args.alpha,
