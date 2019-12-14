@@ -34,7 +34,7 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.1, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0, eps=1e-3,
                  max_epoch=100, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
@@ -190,28 +190,30 @@ class LowRankRecon(object):
                     self.pbar.update()
 
     def _gd_update(self, t, c):
+        # Form image.
+        img_t = 0
+        for j in range(self.J):
+            img_t += self.B[j](self.L_ref[j] * self.R_ref[j][t])
+
         # Download k-space arrays.
         tr_start = t * self.tr_per_frame
         tr_end = (t + 1) * self.tr_per_frame
         coord_t = sp.to_device(self.coord[tr_start:tr_end], self.device)
         dcf_t = sp.to_device(self.dcf[tr_start:tr_end], self.device)
         ksp_tc = sp.to_device(self.ksp[c, tr_start:tr_end], self.device)
-
-        # Form image.
-        img_t = 0
-        for j in range(self.J):
-            img_t += self.B[j](self.L_ref[j] * self.R_ref[j][t])
+        mps_c = sp.to_device(self.mps[c], self.device)
 
         # Data consistency.
         loss_tc = 0
-        mps_c = sp.to_device(self.mps[c], self.device)
-        e_tc = sp.nufft(img_t * mps_c, coord_t)
+        img_t *= mps_c
+        e_tc = sp.nufft(img_t, coord_t)
         e_tc -= ksp_tc
         e_tc *= dcf_t**0.5
         loss_tc += self.xp.linalg.norm(e_tc)**2
         e_tc *= dcf_t**0.5
         e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
         e_tc *= self.xp.conj(mps_c)
+        del img_t, coord_t, dcf_t, ksp_tc, mps_c
 
         if self.comm is not None:
             self.comm.allreduce(e_tc)
@@ -248,25 +250,27 @@ class LowRankRecon(object):
         return loss_tc
 
     def _sgd_update(self, t, c):
+        # Form image.
+        img_t = 0
+        for j in range(self.J):
+            img_t += self.B[j](self.L[j] * self.R[j][t])
+
         # Download k-space arrays.
         tr_start = t * self.tr_per_frame
         tr_end = (t + 1) * self.tr_per_frame
         coord_t = sp.to_device(self.coord[tr_start:tr_end], self.device)
         dcf_t = sp.to_device(self.dcf[tr_start:tr_end], self.device)
         ksp_tc = sp.to_device(self.ksp[c, tr_start:tr_end], self.device)
-
-        # Form image.
-        img_t = 0
-        for j in range(self.J):
-            img_t += self.B[j](self.L[j] * self.R[j][t])
+        mps_c = sp.to_device(self.mps[c], self.device)
 
         # Data consistency.
-        mps_c = sp.to_device(self.mps[c], self.device)
-        e_tc = sp.nufft(img_t * mps_c, coord_t)
+        img_t *= mps_c
+        e_tc = sp.nufft(img_t, coord_t)
         e_tc -= ksp_tc
         e_tc *= dcf_t
         e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
         e_tc *= self.xp.conj(mps_c)
+        del img_t, coord_t, dcf_t, ksp_tc, mps_c
 
         if self.comm is not None:
             self.comm.allreduce(e_tc)
@@ -296,25 +300,27 @@ class LowRankRecon(object):
             sp.axpy(self.R[j][t], -alpha_j, g_R_jt)
 
     def _vr_update(self, t, c):
+        # Form image.
+        img_t = 0
+        for j in range(self.J):
+            img_t += self.B[j](self.L_ref[j] * self.R_ref[j][t])
+
         # Download k-space arrays.
         tr_start = t * self.tr_per_frame
         tr_end = (t + 1) * self.tr_per_frame
         coord_t = sp.to_device(self.coord[tr_start:tr_end], self.device)
         dcf_t = sp.to_device(self.dcf[tr_start:tr_end], self.device)
         ksp_tc = sp.to_device(self.ksp[c, tr_start:tr_end], self.device)
-
-        # Form image.
-        img_t = 0
-        for j in range(self.J):
-            img_t += self.B[j](self.L_ref[j] * self.R_ref[j][t])
+        mps_c = sp.to_device(self.mps[c], self.device)
 
         # Data consistency.
-        mps_c = sp.to_device(self.mps[c], self.device)
-        e_tc = sp.nufft(img_t * mps_c, coord_t)
+        img_t *= mps_c
+        e_tc = sp.nufft(img_t, coord_t)
         e_tc -= ksp_tc
         e_tc *= dcf_t
         e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
         e_tc *= self.xp.conj(mps_c)
+        del img_t, coord_t, dcf_t, ksp_tc, mps_c
 
         if self.comm is not None:
             self.comm.allreduce(e_tc)
@@ -404,6 +410,8 @@ if __name__ == '__main__':
                         help='Block widths for low rank.')
     parser.add_argument('--alpha', type=float, default=1,
                         help='Step-size')
+    parser.add_argument('--beta', type=float, default=0.1,
+                        help='Step-size decay')
     parser.add_argument('--max_epoch', type=int, default=100,
                         help='Maximum epochs.')
     parser.add_argument('--device', type=int, default=-1,
@@ -458,7 +466,7 @@ if __name__ == '__main__':
     img = LowRankRecon(ksp, coord, dcf, mps, args.T, args.lamda,
                        sgw=sgw,
                        blk_widths=args.blk_widths,
-                       alpha=args.alpha,
+                       alpha=args.alpha, beta=args.beta,
                        max_epoch=args.max_epoch,
                        device=device, comm=comm).run()
 
