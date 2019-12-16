@@ -37,6 +37,7 @@ class LowRankRecon(object):
                  blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
                  max_epoch=100, max_power_iter=10,
+                 variance_reduction=True,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -53,6 +54,7 @@ class LowRankRecon(object):
         self.seed = seed
         self.max_epoch = max_epoch
         self.max_power_iter = max_power_iter
+        self.variance_reduction = variance_reduction
         self.show_pbar = show_pbar and (comm is None or comm.rank == 0)
         self.objective_values = []
 
@@ -67,11 +69,52 @@ class LowRankRecon(object):
         self.img_shape = self.mps.shape[1:]
         self.D = len(self.img_shape)
         self.J = len(self.blk_widths)
-        self.B = _get_B(self.img_shape, self.T, self.blk_widths)
+        self.B = self._get_B()
+        self.G = self._get_G()
         if self.sgw is not None:
             self.dcf *= np.expand_dims(self.sgw, -1)
 
         self._normalize()
+
+    def _get_B(self):
+        """Get block to array linear operator.
+
+        """
+        B = []
+        for j in range(self.J):
+            b_j = [min(i, self.blk_widths[j]) for i in self.img_shape]
+            s_j = [(b + 1) // 2 for b in b_j]
+
+            i_j = [ceil((i - b + s) / s) * s + b - s
+                   for i, b, s in zip(self.img_shape, b_j, s_j)]
+            n_j = [(i - b + s) // s for i, b, s in zip(i_j, b_j, s_j)]
+
+            C_j = sp.linop.Resize(self.img_shape, i_j)
+            B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
+            w_j = sp.hanning(b_j, dtype=self.dtype, device=self.device)**0.5
+            W_j = sp.linop.Multiply(B_j.ishape, w_j)
+            B.append(C_j * B_j * W_j)
+
+        return B
+
+    def _get_G(self):
+        G = []
+        for j in range(self.J):
+            b_j = [min(i, self.blk_widths[j]) for i in self.img_shape]
+            s_j = [(b + 1) // 2 for b in b_j]
+
+            i_j = [ceil((i - b + s) / s) * s + b - s
+                   for i, b, s in zip(self.img_shape, b_j, s_j)]
+            n_j = [(i - b + s) // s for i, b, s in zip(i_j, b_j, s_j)]
+
+            M_j = 1
+            for d in range(self.D):
+                M_j *= np.sum(sp.hanning(b_j[d]))
+
+            P_j = sp.prod(n_j)
+            G.append(M_j**0.5 + self.T**0.5 + (2 * np.log(P_j))**0.5)
+
+        return G
 
     def _normalize(self):
         with self.device:
@@ -158,7 +201,8 @@ class LowRankRecon(object):
     def _svrg(self):
         for epoch in range(self.max_epoch):
             with tqdm(desc='Epoch {}/{} GD'.format(epoch + 1, self.max_epoch),
-                      total=self.T * self.C, disable=not self.show_pbar,
+                      total=self.T * self.C,
+                      disable=not self.show_pbar,
                       leave=True) as self.pbar:
                 for j in range(self.J):
                     self.xp.copyto(self.L_ref[j], self.L[j])
@@ -170,27 +214,45 @@ class LowRankRecon(object):
                 for i in range(self.T * self.C):
                     t = i // self.C
                     c = i % self.C
-                    loss += self._gd_update(t, c)
+                    g_L, g_R_t, loss_tc = self._gradf(self.L_ref, self.R_ref, t, c)
+                    for j in range(self.J):
+                        self.gradf_L_ref[j] += g_L[j]
+                        self.gradf_R_ref[j][t] += g_R_t[j]
+
+                    loss += loss_tc
                     self.pbar.update()
 
                 self.pbar.set_postfix(loss=loss)
                 self.objective_values.append(loss)
 
             with tqdm(desc='Epoch {}/{} SGD'.format(epoch + 1, self.max_epoch),
-                      total=self.T * self.C, disable=not self.show_pbar,
+                      total=self.T * self.C,
+                      disable=not self.show_pbar,
                       leave=True) as self.pbar:
                 for i in np.random.permutation(self.T * self.C):
                     t = i // self.C
                     c = i % self.C
-                    self._sgd_update(t, c)
-                    self._vr_update(t, c)
+                    g_L, g_R_t, _ = self._gradf(self.L, self.R, t, c)
+                    for j in range(self.J):
+                        sp.axpy(self.L[j], -self.alpha / self.G[j], g_L[j])
+                        sp.axpy(self.R[j][t], -self.alpha / self.G[j], g_R_t[j])
+
+                    if self.variance_reduction:
+                        g_L_ref, g_R_ref_t, _ = self._gradf(
+                            self.L_ref, self.R_ref, t, c)
+                        for j in range(self.J):
+                            sp.axpy(self.L[j], -self.alpha / self.G[j],
+                                    self.gradf_L_ref[j] - g_L_ref[j])
+                            sp.axpy(self.R[j][t], -self.alpha / self.G[j],
+                                    self.gradf_R_ref[j][t] - g_R_ref_t[j])
+
                     self.pbar.update()
 
-    def _gd_update(self, t, c):
+    def _gradf(self, L, R, t, c):
         # Form image.
         img_t = 0
         for j in range(self.J):
-            img_t += self.B[j](self.L_ref[j] * self.R_ref[j][t])
+            img_t += self.B[j](L[j] * R[j][t])
 
         # Download k-space arrays.
         tr_start = t * self.tr_per_frame
@@ -217,186 +279,29 @@ class LowRankRecon(object):
 
         loss_tc = loss_tc.item()
 
-        # Gradient update.
+        # Compute gradient and update.
+        g_L = []
+        g_R_t = []
         for j in range(self.J):
-            i_j, b_j, s_j, n_j, G_j = _get_bparams(
-                self.img_shape, self.T, self.blk_widths[j])
-            lamda_j = self.lamda * G_j
-
-            # L gradient.
-            g_L_ref_j = self.B[j].H(e_tc)
-            g_L_ref_j *= self.xp.conj(self.R_ref[j][t])
-            sp.axpy(g_L_ref_j, lamda_j / (self.T * self.C), self.L_ref[j])
-            self.gradf_L_ref[j] += g_L_ref_j
-            loss_tc += lamda_j / (self.T * self.C) * self.xp.linalg.norm(
-                self.L_ref[j]).item()**2
-
-            # R gradient.
-            g_R_ref_jt = self.B[j].H(e_tc)
-            g_R_ref_jt *= self.xp.conj(self.L_ref[j])
-            g_R_ref_jt = self.xp.sum(g_R_ref_jt, axis=range(-self.D, 0), keepdims=True)
-            sp.axpy(g_R_ref_jt, lamda_j / self.C, self.R_ref[j][t])
-            self.gradf_R_ref[j][t] += g_R_ref_jt
-            loss_tc += lamda_j / self.C * self.xp.linalg.norm(self.R_ref[j]).item()**2
-
-        loss_tc /= 2
-        return loss_tc
-
-    def _sgd_update(self, t, c):
-        # Form image.
-        img_t = 0
-        for j in range(self.J):
-            img_t += self.B[j](self.L[j] * self.R[j][t])
-
-        # Download k-space arrays.
-        tr_start = t * self.tr_per_frame
-        tr_end = (t + 1) * self.tr_per_frame
-        coord_t = sp.to_device(self.coord[tr_start:tr_end], self.device)
-        dcf_t = sp.to_device(self.dcf[tr_start:tr_end], self.device)
-        ksp_tc = sp.to_device(self.ksp[c, tr_start:tr_end], self.device)
-        mps_c = sp.to_device(self.mps[c], self.device)
-
-        # Data consistency.
-        img_t *= mps_c
-        e_tc = sp.nufft(img_t, coord_t)
-        e_tc -= ksp_tc
-        e_tc *= dcf_t
-        e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
-        e_tc *= self.xp.conj(mps_c)
-        del img_t, coord_t, dcf_t, ksp_tc, mps_c
-
-        if self.comm is not None:
-            self.comm.allreduce(e_tc)
-
-        # Gradient update.
-        for j in range(self.J):
-            i_j, b_j, s_j, n_j, G_j = _get_bparams(
-                self.img_shape, self.T, self.blk_widths[j])
-            lamda_j = self.lamda * G_j
+            lamda_j = self.lamda * self.G[j]
 
             # L gradient.
             g_L_j = self.B[j].H(e_tc)
-            g_L_j *= self.xp.conj(self.R[j][t])
-            sp.axpy(g_L_j, lamda_j / (self.T * self.C), self.L[j])
-            g_L_j *= self.T * self.C
+            g_L_j *= self.xp.conj(R[j][t])
+            sp.axpy(g_L_j, lamda_j / (self.T * self.C), L[j])
+            g_L.append(g_L_j)
+            loss_tc += lamda_j / (self.T * self.C) * self.xp.linalg.norm(L[j]).item()**2
 
             # R gradient.
             g_R_jt = self.B[j].H(e_tc)
-            g_R_jt *= self.xp.conj(self.L[j])
+            g_R_jt *= self.xp.conj(L[j])
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
-            sp.axpy(g_R_jt, lamda_j / self.C, self.R[j][t])
-            g_R_jt *= self.C
+            sp.axpy(g_R_jt, lamda_j / self.C, R[j][t])
+            g_R_t.append(g_R_jt)
+            loss_tc += lamda_j / self.C * self.xp.linalg.norm(R[j]).item()**2
 
-            # Update.
-            alpha_j = self.alpha / G_j
-            sp.axpy(self.L[j], -alpha_j, g_L_j)
-            sp.axpy(self.R[j][t], -alpha_j, g_R_jt)
-
-    def _vr_update(self, t, c):
-        # Form image.
-        img_t = 0
-        for j in range(self.J):
-            img_t += self.B[j](self.L_ref[j] * self.R_ref[j][t])
-
-        # Download k-space arrays.
-        tr_start = t * self.tr_per_frame
-        tr_end = (t + 1) * self.tr_per_frame
-        coord_t = sp.to_device(self.coord[tr_start:tr_end], self.device)
-        dcf_t = sp.to_device(self.dcf[tr_start:tr_end], self.device)
-        ksp_tc = sp.to_device(self.ksp[c, tr_start:tr_end], self.device)
-        mps_c = sp.to_device(self.mps[c], self.device)
-
-        # Data consistency.
-        img_t *= mps_c
-        e_tc = sp.nufft(img_t, coord_t)
-        e_tc -= ksp_tc
-        e_tc *= dcf_t
-        e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
-        e_tc *= self.xp.conj(mps_c)
-        del img_t, coord_t, dcf_t, ksp_tc, mps_c
-
-        if self.comm is not None:
-            self.comm.allreduce(e_tc)
-
-        # Gradient update.
-        for j in range(self.J):
-            i_j, b_j, s_j, n_j, G_j = _get_bparams(
-                self.img_shape, self.T, self.blk_widths[j])
-            lamda_j = self.lamda * G_j
-
-            # L gradient.
-            g_L_ref_j = self.B[j].H(e_tc)
-            g_L_ref_j *= self.xp.conj(self.R_ref[j][t])
-            sp.axpy(g_L_ref_j, lamda_j / (self.T * self.C), self.L_ref[j])
-            g_L_ref_j *= self.T * self.C
-
-            # R gradient.
-            g_R_ref_jt = self.B[j].H(e_tc)
-            g_R_ref_jt *= self.xp.conj(self.L_ref[j])
-            g_R_ref_jt = self.xp.sum(g_R_ref_jt, axis=range(-self.D, 0), keepdims=True)
-            sp.axpy(g_R_ref_jt, lamda_j / self.C, self.R_ref[j][t])
-            g_R_ref_jt *= self.C
-
-            # Update.
-            alpha_j = self.alpha / G_j
-            sp.axpy(self.L[j], -alpha_j, self.gradf_L_ref[j] - g_L_ref_j)
-            sp.axpy(self.R[j][t], -alpha_j, self.gradf_R_ref[j][t] - g_R_ref_jt)
-
-            max_val = max(self.xp.abs(self.L[j]).max(), self.xp.abs(self.R[j]).max())
-            if self.xp.isinf(max_val) or self.xp.isnan(max_val):
-                raise OverflowError
-
-
-def _get_B(img_shape, T, blk_widths, dtype=np.complex64):
-    """Get block to array linear operator.
-
-    """
-    B = []
-    J = len(blk_widths)
-    for j in range(J):
-        i_j, b_j, s_j, n_j, G_j = _get_bparams(
-            img_shape, T, blk_widths[j])
-
-        C_j = sp.linop.Resize(img_shape, i_j)
-        B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
-        W_j = sp.linop.Multiply(B_j.ishape, sp.hanning(b_j, dtype=dtype)**0.5)
-        B.append(C_j * B_j * W_j)
-
-    return B
-
-
-def _get_bparams(img_shape, T, blk_width):
-    """Calculate block parameters for scale j.
-
-    Args:
-        img_shape (tuple of ints): image shape.
-        T (int): number of frames.
-        j (int): scale index.
-
-    Returns:
-       tuple of ints: block shape. img_shape // 2**j
-       tuple of ints: block strides. b_j // 2
-       tuple of ints: number of blocks.
-           (img_shape - b_j + s_j) // s_j.
-       int: number of frames for each block.
-           T // 2**j
-
-    """
-    b_j = [min(i, blk_width) for i in img_shape]
-    s_j = [(b + 1) // 2 for b in b_j]
-
-    i_j = [ceil((i - b + s) / s) * s + b - s
-           for i, b, s in zip(img_shape, b_j, s_j)]
-    n_j = [(i - b + s) // s for i, b, s in zip(i_j, b_j, s_j)]
-
-    M_j = 1
-    for d in range(len(img_shape)):
-        M_j *= np.sum(sp.hanning(b_j[d]))
-
-    P_j = sp.prod(n_j)
-    G_j = M_j**0.5 + T**0.5 + (2 * np.log(P_j))**0.5
-
-    return i_j, b_j, s_j, n_j, G_j
+        loss_tc /= 2
+        return g_L, g_R_t, loss_tc
 
 
 if __name__ == '__main__':
