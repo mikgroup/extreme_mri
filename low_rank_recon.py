@@ -37,7 +37,7 @@ class LowRankRecon(object):
                  blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
                  max_epoch=100, max_power_iter=10,
-                 show_pbar=True, save_objective_values=False):
+                 show_pbar=True):
         self.ksp = ksp
         self.coord = coord
         self.dcf = dcf
@@ -54,7 +54,7 @@ class LowRankRecon(object):
         self.max_epoch = max_epoch
         self.max_power_iter = max_power_iter
         self.show_pbar = show_pbar and (comm is None or comm.rank == 0)
-        self.save_objective_values = save_objective_values
+        self.objective_values = []
 
         np.random.seed(self.seed)
         self.xp = self.device.xp
@@ -174,6 +174,7 @@ class LowRankRecon(object):
                     self.pbar.update()
 
                 self.pbar.set_postfix(loss=loss)
+                self.objective_values.append(loss)
 
             with tqdm(desc='Epoch {}/{} SGD'.format(epoch + 1, self.max_epoch),
                       total=self.T * self.C, disable=not self.show_pbar,
@@ -341,8 +342,8 @@ class LowRankRecon(object):
             sp.axpy(self.L[j], -alpha_j, self.gradf_L_ref[j] - g_L_ref_j)
             sp.axpy(self.R[j][t], -alpha_j, self.gradf_R_ref[j][t] - g_R_ref_jt)
 
-            if (self.xp.isinf(self.L[j]).any() or self.xp.isnan(self.L[j]).any() or
-                self.xp.isinf(self.R[j][t]).any() or self.xp.isnan(self.R[j][t]).any()):
+            max_val = max(self.xp.abs(self.L[j]).max(), self.xp.abs(self.R[j]).max())
+            if self.xp.isinf(max_val) or self.xp.isnan(max_val):
                 raise OverflowError
 
 
