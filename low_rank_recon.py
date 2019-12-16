@@ -36,7 +36,7 @@ class LowRankRecon(object):
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[64, 128, 256], alpha=1, beta=0.1, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
-                 max_epoch=50, max_power_iter=10,
+                 max_epoch=100, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
         self.ksp = ksp
         self.coord = coord
@@ -284,7 +284,7 @@ if __name__ == '__main__':
                         help='Step-size')
     parser.add_argument('--beta', type=float, default=0.1,
                         help='Step-size decay')
-    parser.add_argument('--max_epoch', type=int, default=50,
+    parser.add_argument('--max_epoch', type=int, default=100,
                         help='Maximum epochs.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
@@ -305,7 +305,7 @@ if __name__ == '__main__':
     parser.add_argument('T', type=int,
                         help='Number of frames.')
     parser.add_argument('lamda', type=float,
-                        help='Regularization. Recommend 1e-4 to start.')
+                        help='Regularization. Recommend 1e-3 to start.')
     parser.add_argument('img_file', type=str,
                         help='Output image file.')
 
