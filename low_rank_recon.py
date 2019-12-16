@@ -234,7 +234,7 @@ def _get_B(img_shape, T, blk_widths, dtype=np.complex64):
 
         C_j = sp.linop.Resize(img_shape, i_j)
         B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
-        W_j = sp.linop.Multiply(B_j.ishape, sp.triang(b_j, dtype=dtype))
+        W_j = sp.linop.Multiply(B_j.ishape, sp.hanning(b_j, dtype=dtype))
         B.append(C_j * B_j * W_j)
 
     return B
@@ -266,7 +266,7 @@ def _get_bparams(img_shape, T, blk_width):
 
     M_j = 1
     for d in range(len(img_shape)):
-        M_j *= np.sum(sp.triang(b_j[d])**2)
+        M_j *= np.sum(sp.hanning(b_j[d])**2)
 
     P_j = sp.prod(n_j)
     G_j = M_j**0.5 + T**0.5 + (2 * np.log(P_j))**0.5
