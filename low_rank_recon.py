@@ -389,10 +389,7 @@ def _get_bparams(img_shape, T, blk_width):
            for i, b, s in zip(img_shape, b_j, s_j)]
     n_j = [(i - b + s) // s for i, b, s in zip(i_j, b_j, s_j)]
 
-    M_j = 1
-    for d in range(len(img_shape)):
-        M_j *= np.sum(sp.hanning(b_j[d]))
-
+    M_j = sp.prod(b_j)
     P_j = sp.prod(n_j)
     G_j = M_j**0.5 + T**0.5 + (2 * np.log(P_j))**0.5
 
