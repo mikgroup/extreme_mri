@@ -95,7 +95,7 @@ def _get_B(img_shape, T, blk_widths, dtype=np.complex64):
 
         C_j = sp.linop.Resize(img_shape, i_j)
         B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
-        W_j = sp.linop.Multiply(B_j.ishape, sp.hanning(b_j, dtype=dtype))
+        W_j = sp.linop.Multiply(B_j.ishape, sp.hanning(b_j, dtype=dtype)**0.5)
         B.append(C_j * B_j * W_j)
 
     return B

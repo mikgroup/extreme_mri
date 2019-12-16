@@ -34,7 +34,7 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[64, 128, 256], alpha=1, beta=0.5, sgw=None,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
                  max_epoch=100, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
@@ -359,7 +359,7 @@ def _get_B(img_shape, T, blk_widths, dtype=np.complex64):
 
         C_j = sp.linop.Resize(img_shape, i_j)
         B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
-        W_j = sp.linop.Multiply(B_j.ishape, sp.triang(b_j, dtype=dtype))
+        W_j = sp.linop.Multiply(B_j.ishape, sp.hanning(b_j, dtype=dtype)**0.5)
         B.append(C_j * B_j * W_j)
 
     return B
@@ -391,7 +391,7 @@ def _get_bparams(img_shape, T, blk_width):
 
     M_j = 1
     for d in range(len(img_shape)):
-        M_j *= np.sum(sp.triang(b_j[d])**2)
+        M_j *= np.sum(sp.hanning(b_j[d]))
 
     P_j = sp.prod(n_j)
     G_j = M_j**0.5 + T**0.5 + (2 * np.log(P_j))**0.5
@@ -403,7 +403,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Low rank reconstruction.')
     parser.add_argument('--blk_widths', type=int, nargs='+',
-                        default=[64, 128, 256],
+                        default=[32, 64, 128],
                         help='Block widths for low rank.')
     parser.add_argument('--alpha', type=float, default=1,
                         help='Step-size')
