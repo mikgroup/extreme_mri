@@ -69,10 +69,12 @@ class LowRankRecon(object):
         self.img_shape = self.mps.shape[1:]
         self.D = len(self.img_shape)
         self.J = len(self.blk_widths)
-        self.B = self._get_B()
-        self.G = self._get_G()
         if self.sgw is not None:
             self.dcf *= np.expand_dims(self.sgw, -1)
+
+        with self.device:
+            self.B = self._get_B()
+            self.G = self._get_G()
 
         self._normalize()
 
@@ -87,7 +89,6 @@ class LowRankRecon(object):
 
             i_j = [ceil((i - b + s) / s) * s + b - s
                    for i, b, s in zip(self.img_shape, b_j, s_j)]
-            n_j = [(i - b + s) // s for i, b, s in zip(i_j, b_j, s_j)]
 
             C_j = sp.linop.Resize(self.img_shape, i_j)
             B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
