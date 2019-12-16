@@ -36,8 +36,7 @@ class LowRankRecon(object):
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
-                 max_epoch=100, max_power_iter=10,
-                 variance_reduction=True,
+                 max_epoch=100, max_power_iter=10, variance_reduction=True,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -79,9 +78,6 @@ class LowRankRecon(object):
         self._normalize()
 
     def _get_B(self):
-        """Get block to array linear operator.
-
-        """
         B = []
         for j in range(self.J):
             b_j = [min(i, self.blk_widths[j]) for i in self.img_shape]
@@ -300,6 +296,8 @@ class LowRankRecon(object):
             sp.axpy(g_R_jt, lamda_j / self.C, R[j][t])
             g_R_t.append(g_R_jt)
             loss_tc += lamda_j / self.C * self.xp.linalg.norm(R[j]).item()**2
+            if np.isinf(loss_tc) or np.isnan(loss_tc):
+                raise OverflowError
 
         loss_tc /= 2
         return g_L, g_R_t, loss_tc
