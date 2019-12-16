@@ -200,12 +200,11 @@ class LowRankRecon(object):
         mps_c = sp.to_device(self.mps[c], self.device)
 
         # Data consistency.
-        loss_tc = 0
         img_t *= mps_c
         e_tc = sp.nufft(img_t, coord_t)
         e_tc -= ksp_tc
         e_tc *= dcf_t**0.5
-        loss_tc += self.xp.linalg.norm(e_tc)**2
+        loss_tc = self.xp.linalg.norm(e_tc)**2
         e_tc *= dcf_t**0.5
         e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
         e_tc *= self.xp.conj(mps_c)
@@ -389,7 +388,10 @@ def _get_bparams(img_shape, T, blk_width):
            for i, b, s in zip(img_shape, b_j, s_j)]
     n_j = [(i - b + s) // s for i, b, s in zip(i_j, b_j, s_j)]
 
-    M_j = sp.prod(b_j)
+    M_j = 1
+    for d in range(len(img_shape)):
+        M_j *= np.sum(sp.hanning(b_j[d]))
+
     P_j = sp.prod(n_j)
     G_j = M_j**0.5 + T**0.5 + (2 * np.log(P_j))**0.5
 
