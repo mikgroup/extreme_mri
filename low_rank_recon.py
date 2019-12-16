@@ -34,16 +34,15 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
-                 device=sp.cpu_device, comm=None, seed=0, eps=1e-3,
-                 max_epoch=100, max_power_iter=10,
+                 blk_widths=[64, 128, 256], alpha=1, beta=0.5, sgw=None,
+                 device=sp.cpu_device, comm=None, seed=0,
+                 max_epoch=50, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
         self.ksp = ksp
         self.coord = coord
         self.dcf = dcf
         self.mps = mps
         self.sgw = sgw
-        self.eps = eps
         self.blk_widths = blk_widths
         self.T = T
         self.lamda = lamda
@@ -119,7 +118,6 @@ class LowRankRecon(object):
                 L_j_norm = self.xp.sum(self.xp.abs(L_j)**2,
                                        axis=range(-self.D, 0), keepdims=True)**0.5
                 L_j /= L_j_norm
-                L_j *= self.eps
 
                 R_j_shape = (self.T, ) + L_j_norm.shape
                 R_j = self.xp.random.standard_normal(R_j_shape).astype(self.dtype)
@@ -127,7 +125,6 @@ class LowRankRecon(object):
                         self.xp.random.standard_normal(R_j_shape).astype(self.dtype))
                 R_j_norm = self.xp.sum(self.xp.abs(R_j)**2, axis=0, keepdims=True)**0.5
                 R_j /= R_j_norm
-                R_j *= self.eps
 
                 self.L.append(L_j)
                 self.R.append(R_j)
@@ -362,7 +359,7 @@ def _get_B(img_shape, T, blk_widths, dtype=np.complex64):
 
         C_j = sp.linop.Resize(img_shape, i_j)
         B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
-        W_j = sp.linop.Multiply(B_j.ishape, sp.triang(b_j, dtype=dtype))
+        W_j = sp.linop.Multiply(B_j.ishape, sp.hanning(b_j, dtype=dtype))
         B.append(C_j * B_j * W_j)
 
     return B
@@ -394,7 +391,7 @@ def _get_bparams(img_shape, T, blk_width):
 
     M_j = 1
     for d in range(len(img_shape)):
-        M_j *= np.sum(sp.triang(b_j[d])**2)
+        M_j *= np.sum(sp.hanning(b_j[d])**2)
 
     P_j = sp.prod(n_j)
     G_j = M_j**0.5 + T**0.5 + (2 * np.log(P_j))**0.5
@@ -406,13 +403,13 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Low rank reconstruction.')
     parser.add_argument('--blk_widths', type=int, nargs='+',
-                        default=[32, 64, 128],
+                        default=[64, 128, 256],
                         help='Block widths for low rank.')
     parser.add_argument('--alpha', type=float, default=1,
                         help='Step-size')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay')
-    parser.add_argument('--max_epoch', type=int, default=100,
+    parser.add_argument('--max_epoch', type=int, default=50,
                         help='Maximum epochs.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
