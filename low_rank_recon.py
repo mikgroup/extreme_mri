@@ -34,7 +34,7 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[64, 128, 256], alpha=1, beta=0.5, sgw=None,
+                 blk_widths=[64, 128, 256], alpha=1, beta=0.1, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
                  max_epoch=50, max_power_iter=10,
                  show_pbar=True, save_objective_values=False):
@@ -407,7 +407,7 @@ if __name__ == '__main__':
                         help='Block widths for low rank.')
     parser.add_argument('--alpha', type=float, default=1,
                         help='Step-size')
-    parser.add_argument('--beta', type=float, default=0.5,
+    parser.add_argument('--beta', type=float, default=0.1,
                         help='Step-size decay')
     parser.add_argument('--max_epoch', type=int, default=50,
                         help='Maximum epochs.')
