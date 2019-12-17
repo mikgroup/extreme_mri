@@ -146,10 +146,6 @@ class LowRankRecon(object):
         with self.device:
             self.L = []
             self.R = []
-            self.L_ref = []
-            self.R_ref = []
-            self.gradf_L_ref = []
-            self.gradf_R_ref = []
             for j in range(self.J):
                 L_j_shape = self.B[j].ishape
                 L_j = self.xp.random.standard_normal(L_j_shape).astype(self.dtype)
@@ -168,11 +164,6 @@ class LowRankRecon(object):
 
                 self.L.append(L_j)
                 self.R.append(R_j)
-
-                self.L_ref.append(self.xp.empty_like(L_j))
-                self.R_ref.append(self.xp.empty_like(R_j))
-                self.gradf_L_ref.append(self.xp.empty_like(L_j))
-                self.gradf_R_ref.append(self.xp.empty_like(R_j))
 
     def run(self):
         with self.device:
@@ -196,54 +187,76 @@ class LowRankRecon(object):
                     self.img_shape)
 
     def _svrg(self):
-        for epoch in range(self.max_epoch):
-            with tqdm(desc='Epoch {}/{} GD'.format(epoch + 1, self.max_epoch),
-                      total=self.T * self.C,
-                      disable=not self.show_pbar,
-                      leave=True) as self.pbar:
+        for self.epoch in range(self.max_epoch):
+            if self.variance_reduction:
+                self._ref()
+
+            self._sgd()
+
+            if self.variance_reduction:
+                self._var()
+
+    def _ref(self):
+        with tqdm(desc='Epoch {}/{} REF'.format(self.epoch + 1, self.max_epoch),
+                  total=self.T * self.C,
+                  disable=not self.show_pbar,
+                  leave=True) as self.pbar:
+            self.L_ref = []
+            self.R_ref = []
+            self.gradf_L_ref = []
+            self.gradf_R_ref = []
+            for j in range(self.J):
+                self.L_ref.append(self.L[j].copy())
+                self.R_ref.append(self.R[j].copy())
+                self.gradf_L_ref.append(self.xp.zeros_like(self.L[j]))
+                self.gradf_R_ref.append(self.xp.zeros_like(self.R[j]))
+
+            loss = 0
+            for i in range(self.T * self.C):
+                t = i // self.C
+                c = i % self.C
+                g_L, g_R_t, loss_tc = self._gradf(self.L_ref, self.R_ref, t, c)
                 for j in range(self.J):
-                    self.xp.copyto(self.L_ref[j], self.L[j])
-                    self.xp.copyto(self.R_ref[j], self.R[j])
-                    self.gradf_L_ref[j].fill(0)
-                    self.gradf_R_ref[j].fill(0)
+                    self.gradf_L_ref[j] += g_L[j]
+                    self.gradf_R_ref[j][t] += g_R_t[j]
 
-                loss = 0
-                for i in range(self.T * self.C):
-                    t = i // self.C
-                    c = i % self.C
-                    g_L, g_R_t, loss_tc = self._gradf(self.L_ref, self.R_ref, t, c)
-                    for j in range(self.J):
-                        self.gradf_L_ref[j] += g_L[j]
-                        self.gradf_R_ref[j][t] += g_R_t[j]
+                loss += loss_tc
+                self.pbar.update()
 
-                    loss += loss_tc
-                    self.pbar.update()
+            self.pbar.set_postfix(loss=loss)
+            self.objective_values.append(loss)
 
-                self.pbar.set_postfix(loss=loss)
-                self.objective_values.append(loss)
+    def _sgd(self):
+        with tqdm(desc='Epoch {}/{} SGD'.format(self.epoch + 1, self.max_epoch),
+                  total=self.T * self.C,
+                  disable=not self.show_pbar,
+                  leave=True) as self.pbar:
+            for i in np.random.permutation(self.T * self.C):
+                t = i // self.C
+                c = i % self.C
+                g_L, g_R_t, _ = self._gradf(self.L, self.R, t, c)
+                for j in range(self.J):
+                    sp.axpy(self.L[j], -self.alpha / self.G[j], g_L[j])
+                    sp.axpy(self.R[j][t], -self.alpha / self.G[j], g_R_t[j])
 
-            with tqdm(desc='Epoch {}/{} SGD'.format(epoch + 1, self.max_epoch),
-                      total=self.T * self.C,
-                      disable=not self.show_pbar,
-                      leave=True) as self.pbar:
-                for i in np.random.permutation(self.T * self.C):
-                    t = i // self.C
-                    c = i % self.C
-                    g_L, g_R_t, _ = self._gradf(self.L, self.R, t, c)
-                    for j in range(self.J):
-                        sp.axpy(self.L[j], -self.alpha / self.G[j], g_L[j])
-                        sp.axpy(self.R[j][t], -self.alpha / self.G[j], g_R_t[j])
+                self.pbar.update()
 
-                    if self.variance_reduction:
-                        g_L_ref, g_R_ref_t, _ = self._gradf(
-                            self.L_ref, self.R_ref, t, c)
-                        for j in range(self.J):
-                            sp.axpy(self.L[j], -self.alpha / self.G[j],
-                                    self.gradf_L_ref[j] - g_L_ref[j])
-                            sp.axpy(self.R[j][t], -self.alpha / self.G[j],
-                                    self.gradf_R_ref[j][t] - g_R_ref_t[j])
+    def _var(self):
+        with tqdm(desc='Epoch {}/{} VAR'.format(self.epoch + 1, self.max_epoch),
+                  total=self.T * self.C,
+                  disable=not self.show_pbar,
+                  leave=True) as self.pbar:
+            for i in range(self.T * self.C):
+                t = i // self.C
+                c = i % self.C
+                g_L_ref, g_R_ref_t, _ = self._gradf(self.L_ref, self.R_ref, t, c)
+                for j in range(self.J):
+                    sp.axpy(self.L[j], -self.alpha / self.G[j],
+                            self.gradf_L_ref[j] - g_L_ref[j])
+                    sp.axpy(self.R[j][t], -self.alpha / self.G[j],
+                            self.gradf_R_ref[j][t] - g_R_ref_t[j])
 
-                    self.pbar.update()
+            self.pbar.update()
 
     def _gradf(self, L, R, t, c):
         # Form image.
@@ -287,7 +300,6 @@ class LowRankRecon(object):
             g_L_j *= self.xp.conj(R[j][t])
             sp.axpy(g_L_j, lamda_j / (self.T * self.C), L[j])
             g_L.append(g_L_j)
-            loss_tc += lamda_j / (self.T * self.C) * self.xp.linalg.norm(L[j]).item()**2
 
             # R gradient.
             g_R_jt = self.B[j].H(e_tc)
@@ -295,7 +307,9 @@ class LowRankRecon(object):
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
             sp.axpy(g_R_jt, lamda_j / self.C, R[j][t])
             g_R_t.append(g_R_jt)
-            loss_tc += lamda_j / self.C * self.xp.linalg.norm(R[j]).item()**2
+
+            loss_tc += lamda_j / (self.T * self.C) * self.xp.linalg.norm(L[j]).item()**2
+            loss_tc += lamda_j / self.C * self.xp.linalg.norm(R[j][t]).item()**2
             if np.isinf(loss_tc) or np.isnan(loss_tc):
                 raise OverflowError
 
