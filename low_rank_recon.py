@@ -208,7 +208,7 @@ class LowRankRecon(object):
 
             loss = 0
             for t in range(self.T):
-                g_L, _, loss_t = self._gradf(self.L_ref, self.R_ref, t)
+                g_L, _, loss_t = self._gradf_t(self.L_ref, self.R_ref, t)
                 for j in range(self.J):
                     self.gradf_L_ref[j] += g_L[j]
 
@@ -224,7 +224,7 @@ class LowRankRecon(object):
                   disable=not self.show_pbar,
                   leave=True) as self.pbar:
             for t in np.random.permutation(self.T):
-                g_L, g_R_t, _ = self._gradf(self.L, self.R, t)
+                g_L, g_R_t, _ = self._gradf_t(self.L, self.R, t)
                 for j in range(self.J):
                     g_L[j] *= self.T
                     sp.axpy(self.L[j], -self.alpha / self.G[j], g_L[j])
@@ -238,7 +238,7 @@ class LowRankRecon(object):
                   disable=not self.show_pbar,
                   leave=True) as self.pbar:
             for t in range(self.T):
-                g_L_ref, _, _ = self._gradf(self.L_ref, self.R_ref, t)
+                g_L_ref, _, _ = self._gradf_t(self.L_ref, self.R_ref, t)
                 for j in range(self.J):
                     g_L_ref[j] *= self.T
                     sp.axpy(self.L[j], -self.alpha / self.G[j],
@@ -246,7 +246,7 @@ class LowRankRecon(object):
 
                 self.pbar.update()
 
-    def _gradf(self, L, R, t):
+    def _gradf_t(self, L, R, t):
         # Form image.
         img_t = 0
         for j in range(self.J):
