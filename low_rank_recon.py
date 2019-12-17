@@ -200,28 +200,24 @@ class LowRankRecon(object):
 
     def _ref(self):
         with tqdm(desc='Epoch {}/{} REF'.format(self.epoch + 1, self.max_epoch),
-                  total=self.T * self.C,
+                  total=self.T,
                   disable=not self.show_pbar,
                   leave=True) as self.pbar:
             self.L_ref = []
             self.R_ref = []
             self.gradf_L_ref = []
-            self.gradf_R_ref = []
             for j in range(self.J):
                 self.L_ref.append(self.L[j].copy())
                 self.R_ref.append(self.R[j].copy())
                 self.gradf_L_ref.append(self.xp.zeros_like(self.L[j]))
-                self.gradf_R_ref.append(self.xp.zeros_like(self.R[j]))
 
             loss = 0
-            indices = list((t, c) for t in range(self.T) for c in range(self.C))
-            for t, c in indices:
-                g_L, g_R_t, loss_tc = self._gradf(self.L_ref, self.R_ref, t, c)
+            for t in range(self.T):
+                g_L, _, loss_t = self._gradf(self.L_ref, self.R_ref, t)
                 for j in range(self.J):
                     self.gradf_L_ref[j] += g_L[j]
-                    self.gradf_R_ref[j][t] += g_R_t[j]
 
-                loss += loss_tc
+                loss += loss_t
                 self.pbar.update()
 
             self.pbar.set_postfix(loss=loss)
@@ -229,13 +225,11 @@ class LowRankRecon(object):
 
     def _sgd(self):
         with tqdm(desc='Epoch {}/{} SGD'.format(self.epoch + 1, self.max_epoch),
-                  total=self.T * self.C,
+                  total=self.T,
                   disable=not self.show_pbar,
                   leave=True) as self.pbar:
-            indices = list((t, c) for t in range(self.T) for c in range(self.C))
-            random.shuffle(indices)
-            for t, c in indices:
-                g_L, g_R_t, _ = self._gradf(self.L, self.R, t, c)
+            for t in np.random.permutation(self.T):
+                g_L, g_R_t, _ = self._gradf(self.L, self.R, t)
                 for j in range(self.J):
                     sp.axpy(self.L[j], -self.alpha / self.G[j], g_L[j])
                     sp.axpy(self.R[j][t], -self.alpha / self.G[j], g_R_t[j])
@@ -244,21 +238,18 @@ class LowRankRecon(object):
 
     def _var(self):
         with tqdm(desc='Epoch {}/{} VAR'.format(self.epoch + 1, self.max_epoch),
-                  total=self.T * self.C,
+                  total=self.T,
                   disable=not self.show_pbar,
                   leave=True) as self.pbar:
-            indices = list((t, c) for t in range(self.T) for c in range(self.C))
-            for t, c in indices:
-                g_L_ref, g_R_ref_t, _ = self._gradf(self.L_ref, self.R_ref, t, c)
+            for t in range(self.T):
+                g_L_ref, _, _ = self._gradf(self.L_ref, self.R_ref, t)
                 for j in range(self.J):
                     sp.axpy(self.L[j], -self.alpha / self.G[j],
                             self.gradf_L_ref[j] - g_L_ref[j])
-                    sp.axpy(self.R[j][t], -self.alpha / self.G[j],
-                            self.gradf_R_ref[j][t] - g_R_ref_t[j])
 
                 self.pbar.update()
 
-    def _gradf(self, L, R, t, c):
+    def _gradf(self, L, R, t):
         # Form image.
         img_t = 0
         for j in range(self.J):
@@ -269,52 +260,54 @@ class LowRankRecon(object):
         tr_end = (t + 1) * self.tr_per_frame
         coord_t = sp.to_device(self.coord[tr_start:tr_end], self.device)
         dcf_t = sp.to_device(self.dcf[tr_start:tr_end], self.device)
-        ksp_tc = sp.to_device(self.ksp[c, tr_start:tr_end], self.device)
-        mps_c = sp.to_device(self.mps[c], self.device)
+        ksp_t = sp.to_device(self.ksp[:, tr_start:tr_end], self.device)
 
         # Data consistency.
-        img_t *= mps_c
-        e_tc = sp.nufft(img_t, coord_t)
-        e_tc -= ksp_tc
-        e_tc *= dcf_t**0.5
-        loss_tc = self.xp.linalg.norm(e_tc)**2
-        e_tc *= dcf_t**0.5
-        e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
-        e_tc *= self.xp.conj(mps_c)
-        del img_t, coord_t, dcf_t, ksp_tc, mps_c
+        e_t = 0
+        loss_t = 0
+        for c in range(self.C):
+            mps_c = sp.to_device(self.mps[c], self.device)
+            e_tc = sp.nufft(img_t * mps_c, coord_t)
+            e_tc -= ksp_t[c]
+            e_tc *= dcf_t**0.5
+            loss_t += self.xp.linalg.norm(e_tc)**2
+            e_tc *= dcf_t**0.5
+            e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
+            e_tc *= self.xp.conj(mps_c)
+            e_t += e_tc
 
         if self.comm is not None:
-            self.comm.allreduce(e_tc)
-            self.comm.allreduce(loss_tc)
+            self.comm.allreduce(e_t)
+            self.comm.allreduce(loss_t)
 
-        loss_tc = loss_tc.item()
+        loss_t = loss_t.item()
 
-        # Compute gradient and update.
+        # Compute gradient.
         g_L = []
         g_R_t = []
         for j in range(self.J):
             lamda_j = self.lamda * self.G[j]
 
             # L gradient.
-            g_L_j = self.B[j].H(e_tc)
+            g_L_j = self.B[j].H(e_t)
             g_L_j *= self.xp.conj(R[j][t])
-            sp.axpy(g_L_j, lamda_j / (self.T * self.C), L[j])
+            sp.axpy(g_L_j, lamda_j / (self.T), L[j])
             g_L.append(g_L_j)
 
             # R gradient.
-            g_R_jt = self.B[j].H(e_tc)
+            g_R_jt = self.B[j].H(e_t)
             g_R_jt *= self.xp.conj(L[j])
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
-            sp.axpy(g_R_jt, lamda_j / self.C, R[j][t])
+            sp.axpy(g_R_jt, lamda_j, R[j][t])
             g_R_t.append(g_R_jt)
 
-            loss_tc += lamda_j / (self.T * self.C) * self.xp.linalg.norm(L[j]).item()**2
-            loss_tc += lamda_j / self.C * self.xp.linalg.norm(R[j][t]).item()**2
-            if np.isinf(loss_tc) or np.isnan(loss_tc):
+            loss_t += lamda_j / self.T * self.xp.linalg.norm(L[j]).item()**2
+            loss_t += lamda_j * self.xp.linalg.norm(R[j][t]).item()**2
+            if np.isinf(loss_t) or np.isnan(loss_t):
                 raise OverflowError
 
-        loss_tc /= 2
-        return g_L, g_R_t, loss_tc
+        loss_t /= 2
+        return g_L, g_R_t, loss_t
 
 
 if __name__ == '__main__':
@@ -372,11 +365,8 @@ if __name__ == '__main__':
         sgw = None
 
     # Split between nodes.
-    C = (len(ksp) + comm.size - 1) // comm.size
     ksp = ksp[comm.rank::comm.size].copy()
     mps = mps[comm.rank::comm.size].copy()
-    ksp = sp.resize(ksp, (C, ) + ksp.shape[1:])
-    mps = sp.resize(mps, (C, ) + mps.shape[1:])
 
     img = LowRankRecon(ksp, coord, dcf, mps, args.T, args.lamda,
                        sgw=sgw,
