@@ -329,6 +329,8 @@ if __name__ == '__main__':
                         'Ignore device when toggled.')
     parser.add_argument('--sgw_file', type=str,
                         help='Soft gating weights.')
+    parser.add_argument('--obj_file', type=str,
+                        help='Objective value file.')
 
     parser.add_argument('ksp_file', type=str,
                         help='k-space file.')
@@ -368,12 +370,15 @@ if __name__ == '__main__':
     ksp = ksp[comm.rank::comm.size].copy()
     mps = mps[comm.rank::comm.size].copy()
 
-    img = LowRankRecon(ksp, coord, dcf, mps, args.T, args.lamda,
+    app = LowRankRecon(ksp, coord, dcf, mps, args.T, args.lamda,
                        sgw=sgw,
                        blk_widths=args.blk_widths,
                        alpha=args.alpha, beta=args.beta,
                        max_epoch=args.max_epoch,
-                       device=device, comm=comm).run()
+                       device=device, comm=comm)
+    img = app.run()
 
     if comm.rank == 0:
         img.save(args.img_file)
+        if args.obj_file is not None:
+            np.save(args.obj_file, app.objective_values)
