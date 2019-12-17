@@ -214,7 +214,7 @@ class LowRankRecon(object):
                 self.gradf_R_ref.append(self.xp.zeros_like(self.R[j]))
 
             loss = 0
-            indices = ((t, c) for t in range(self.T) for c in range(self.C))
+            indices = list((t, c) for t in range(self.T) for c in range(self.C))
             for t, c in indices:
                 g_L, g_R_t, loss_tc = self._gradf(self.L_ref, self.R_ref, t, c)
                 for j in range(self.J):
@@ -232,7 +232,7 @@ class LowRankRecon(object):
                   total=self.T * self.C,
                   disable=not self.show_pbar,
                   leave=True) as self.pbar:
-            indices = ((t, c) for t in range(self.T) for c in range(self.C))
+            indices = list((t, c) for t in range(self.T) for c in range(self.C))
             random.shuffle(indices)
             for t, c in indices:
                 g_L, g_R_t, _ = self._gradf(self.L, self.R, t, c)
@@ -247,8 +247,7 @@ class LowRankRecon(object):
                   total=self.T * self.C,
                   disable=not self.show_pbar,
                   leave=True) as self.pbar:
-            indices = ((t, c) for t in range(self.T) for c in range(self.C))
-            random.shuffle(indices)
+            indices = list((t, c) for t in range(self.T) for c in range(self.C))
             for t, c in indices:
                 g_L_ref, g_R_ref_t, _ = self._gradf(self.L_ref, self.R_ref, t, c)
                 for j in range(self.J):
