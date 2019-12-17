@@ -35,8 +35,8 @@ class LowRankRecon(object):
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
-                 device=sp.cpu_device, comm=None, seed=0,
-                 max_epoch=90, max_power_iter=10, K=30,
+                 device=sp.cpu_device, comm=None, seed=0, eps=0.1,
+                 max_epoch=100, max_power_iter=10,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -45,10 +45,10 @@ class LowRankRecon(object):
         self.sgw = sgw
         self.blk_widths = blk_widths
         self.T = T
-        self.K = K
         self.lamda = lamda
         self.alpha = alpha
         self.beta = beta
+        self.eps = eps
         self.device = sp.Device(device)
         self.comm = comm
         self.seed = seed
@@ -139,7 +139,7 @@ class LowRankRecon(object):
                 self.comm.allreduce(img_adj)
 
             img_adj_norm = self.xp.linalg.norm(img_adj).item()
-            self.ksp *= sp.prod(self.img_shape)**0.5 / img_adj_norm
+            self.ksp *= self.T**0.5 / img_adj_norm
 
     def _init_LR(self):
         with self.device:
@@ -153,6 +153,7 @@ class LowRankRecon(object):
                 L_j_norm = self.xp.sum(self.xp.abs(L_j)**2,
                                        axis=range(-self.D, 0), keepdims=True)**0.5
                 L_j /= L_j_norm
+                L_j *= self.eps
 
                 R_j_shape = (self.T, ) + L_j_norm.shape
                 R_j = self.xp.random.standard_normal(R_j_shape).astype(self.dtype)
@@ -160,6 +161,7 @@ class LowRankRecon(object):
                         self.xp.random.standard_normal(R_j_shape).astype(self.dtype))
                 R_j_norm = self.xp.sum(self.xp.abs(R_j)**2, axis=0, keepdims=True)**0.5
                 R_j /= R_j_norm
+                R_j *= self.eps
 
                 self.L.append(L_j)
                 self.R.append(R_j)
@@ -253,9 +255,8 @@ class LowRankRecon(object):
                 raise OverflowError
 
             # Add.
-            sp.axpy(self.L[j],
-                    -self.alpha / self.G[j] * self.beta**(self.epoch // self.K), g_L_j)
-            sp.axpy(self.R[j][t], -self.alpha / self.G[j], g_R_jt)
+            sp.axpy(self.L[j], -self.alpha, g_L_j)
+            sp.axpy(self.R[j][t], -self.alpha, g_R_jt)
 
 
         loss_t /= 2
@@ -272,10 +273,8 @@ if __name__ == '__main__':
                         help='Step-size')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay')
-    parser.add_argument('--max_epoch', type=int, default=90,
+    parser.add_argument('--max_epoch', type=int, default=100,
                         help='Maximum epochs.')
-    parser.add_argument('--K', type=int, default=30,
-                        help='Epochs for step decay.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
     parser.add_argument('--multi_gpu', action='store_true',
@@ -324,7 +323,6 @@ if __name__ == '__main__':
 
     app = LowRankRecon(ksp, coord, dcf, mps, args.T, args.lamda,
                        sgw=sgw,
-                       K=args.K,
                        blk_widths=args.blk_widths,
                        alpha=args.alpha, beta=args.beta,
                        max_epoch=args.max_epoch,
