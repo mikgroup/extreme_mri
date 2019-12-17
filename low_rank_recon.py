@@ -267,8 +267,8 @@ class LowRankRecon(object):
     def _gradf(self, L, R, t, c, j):
         # Form image.
         img_t = 0
-        for j in range(self.J):
-            img_t += self.B[j](L[j] * R[j][t])
+        for i in range(self.J):
+            img_t += self.B[i](L[i] * R[i][t])
 
         # Download k-space arrays.
         tr_start = t * self.tr_per_frame
