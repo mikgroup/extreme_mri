@@ -266,7 +266,7 @@ if __name__ == '__main__':
     parser.add_argument('--blk_widths', type=int, nargs='+',
                         default=[32, 64, 128],
                         help='Block widths for low rank.')
-    parser.add_argument('--alpha', type=float, default=10,
+    parser.add_argument('--alpha', type=float, default=8,
                         help='Step-size')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay')
@@ -291,7 +291,7 @@ if __name__ == '__main__':
     parser.add_argument('T', type=int,
                         help='Number of frames.')
     parser.add_argument('lamda', type=float,
-                        help='Regularization. Recommend 1e-6 to start.')
+                        help='Regularization. Recommend 1e-8 to start.')
     parser.add_argument('img_file', type=str,
                         help='Output image file.')
 
