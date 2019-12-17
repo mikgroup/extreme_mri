@@ -36,7 +36,7 @@ class LowRankRecon(object):
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
-                 max_epoch=100, max_power_iter=10,
+                 max_epoch=50, max_power_iter=10,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -138,7 +138,7 @@ class LowRankRecon(object):
                 self.comm.allreduce(img_adj)
 
             img_adj_norm = self.xp.linalg.norm(img_adj).item()
-            self.ksp *= (sp.prod(self.img_shape) * self.T)**0.5 / img_adj_norm
+            self.ksp *= sp.prod(self.img_shape)**0.5 / img_adj_norm
 
     def _init_LR(self):
         with self.device:
@@ -270,7 +270,7 @@ if __name__ == '__main__':
                         help='Step-size')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay')
-    parser.add_argument('--max_epoch', type=int, default=100,
+    parser.add_argument('--max_epoch', type=int, default=50,
                         help='Maximum epochs.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
