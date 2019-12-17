@@ -262,7 +262,7 @@ class LowRankRecon(object):
                 sp.axpy(self.R[j][t], -self.alpha / self.G[j],
                         self.gradf_R_ref[j][t] - g_R_ref_tj)
 
-            self.pbar.update()
+                self.pbar.update()
 
     def _gradf(self, L, R, t, c, j):
         # Form image.
