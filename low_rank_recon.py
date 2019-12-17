@@ -186,10 +186,10 @@ class LowRankRecon(object):
 
     def _sgd(self):
         for epoch in range(self.max_epoch):
-            with tqdm(desc='Epoch {}/{} SGD'.format(epoch + 1, self.max_epoch),
-                      total=self.T,
-                      disable=not self.show_pbar,
-                      leave=True) as self.pbar:
+            desc = 'Epoch {}/{}'.format(epoch + 1, self.max_epoch)
+            disable = not self.show_pbar
+            total = self.T
+            with tqdm(desc=desc, total=total, disable=disable, leave=True) as self.pbar:
                 loss = 0
                 for i, t in enumerate(np.random.permutation(self.T)):
                     loss += self._update(t)
