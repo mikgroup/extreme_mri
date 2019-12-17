@@ -295,22 +295,19 @@ class LowRankRecon(object):
 
         loss_tcj = loss_tcj.item() / self.J
 
-        # Compute gradient and update.
-        lamda_j = self.lamda * self.G[j]
-
         # L gradient.
         g_L_j = self.B[j].H(e_tc)
         g_L_j *= self.xp.conj(R[j][t])
-        sp.axpy(g_L_j, lamda_j / (self.T * self.C), L[j])
+        sp.axpy(g_L_j, self.lamda * self.G[j] / (self.T * self.C), L[j])
 
         # R gradient.
         g_R_jt = self.B[j].H(e_tc)
         g_R_jt *= self.xp.conj(L[j])
         g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
-        sp.axpy(g_R_jt, lamda_j / self.C, R[j][t])
+        sp.axpy(g_R_jt, self.lamda * self.G[j] / self.C, R[j][t])
 
-        loss_tcj += lamda_j / (self.T * self.C) * self.xp.linalg.norm(L[j]).item()**2
-        loss_tcj += lamda_j / self.C * self.xp.linalg.norm(R[j][t]).item()**2
+        loss_tcj += self.lamda * self.G[j] / (self.T * self.C) * self.xp.linalg.norm(L[j]).item()**2
+        loss_tcj += self.lamda * self.G[j] / self.C * self.xp.linalg.norm(R[j][t]).item()**2
         if np.isinf(loss_tcj) or np.isnan(loss_tcj):
             raise OverflowError
 
