@@ -277,7 +277,7 @@ class LowRankRecon(object):
             self.comm.allreduce(e_t)
             self.comm.allreduce(loss_t)
 
-        del img_t, e_t, e_tc, mps_c, ksp_t, dcf_t, coord_t
+        del img_t, e_tc, mps_c, ksp_t, dcf_t, coord_t
         loss_t = loss_t.item()
 
         # Compute gradient.
