@@ -2,6 +2,7 @@ import argparse
 import logging
 import numpy as np
 import sigpy as sp
+import random
 from math import ceil
 from tqdm.auto import tqdm
 from low_rank_image import LowRankImage
@@ -57,6 +58,7 @@ class LowRankRecon(object):
         self.show_pbar = show_pbar and (comm is None or comm.rank == 0)
         self.objective_values = []
 
+        random.seed(self.seed)
         np.random.seed(self.seed)
         self.xp = self.device.xp
         with self.device:
@@ -212,9 +214,8 @@ class LowRankRecon(object):
                 self.gradf_R_ref.append(self.xp.zeros_like(self.R[j]))
 
             loss = 0
-            for i in range(self.T * self.C):
-                t = i // self.C
-                c = i % self.C
+            indices = ((t, c) for t in range(self.T) for c in range(self.C))
+            for t, c in indices:
                 g_L, g_R_t, loss_tc = self._gradf(self.L_ref, self.R_ref, t, c)
                 for j in range(self.J):
                     self.gradf_L_ref[j] += g_L[j]
@@ -231,9 +232,9 @@ class LowRankRecon(object):
                   total=self.T * self.C,
                   disable=not self.show_pbar,
                   leave=True) as self.pbar:
-            for i in np.random.permutation(self.T * self.C):
-                t = i // self.C
-                c = i % self.C
+            indices = ((t, c) for t in range(self.T) for c in range(self.C))
+            random.shuffle(indices)
+            for t, c in indices:
                 g_L, g_R_t, _ = self._gradf(self.L, self.R, t, c)
                 for j in range(self.J):
                     sp.axpy(self.L[j], -self.alpha / self.G[j], g_L[j])
@@ -246,9 +247,9 @@ class LowRankRecon(object):
                   total=self.T * self.C,
                   disable=not self.show_pbar,
                   leave=True) as self.pbar:
-            for i in range(self.T * self.C):
-                t = i // self.C
-                c = i % self.C
+            indices = ((t, c) for t in range(self.T) for c in range(self.C))
+            random.shuffle(indices)
+            for t, c in indices:
                 g_L_ref, g_R_ref_t, _ = self._gradf(self.L_ref, self.R_ref, t, c)
                 for j in range(self.J):
                     sp.axpy(self.L[j], -self.alpha / self.G[j],
