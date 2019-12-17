@@ -291,7 +291,7 @@ if __name__ == '__main__':
     parser.add_argument('T', type=int,
                         help='Number of frames.')
     parser.add_argument('lamda', type=float,
-                        help='Regularization. Recommend 1e-3 to start.')
+                        help='Regularization. Recommend 1e-2 to start.')
     parser.add_argument('img_file', type=str,
                         help='Output image file.')
 
