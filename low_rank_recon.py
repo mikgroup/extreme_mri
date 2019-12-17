@@ -35,9 +35,9 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[50, 100, 200], alpha=1, beta=0.5, sgw=None,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
-                 max_epoch=100, max_power_iter=10, variance_reduction=True,
+                 max_epoch=50, max_power_iter=10,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -54,9 +54,7 @@ class LowRankRecon(object):
         self.seed = seed
         self.max_epoch = max_epoch
         self.max_power_iter = max_power_iter
-        self.variance_reduction = variance_reduction
         self.show_pbar = show_pbar and (comm is None or comm.rank == 0)
-        self.objective_values = []
 
         random.seed(self.seed)
         np.random.seed(self.seed)
@@ -189,14 +187,11 @@ class LowRankRecon(object):
                     self.img_shape)
 
     def _svrg(self):
+        self.objective_values = []
         for self.epoch in range(self.max_epoch):
-            if self.variance_reduction:
-                self._ref()
-
+            self._ref()
             self._sgd()
-
-            if self.variance_reduction:
-                self._var()
+            self._var()
 
     def _ref(self):
         with tqdm(desc='Epoch {}/{} REF'.format(self.epoch + 1, self.max_epoch),
@@ -291,7 +286,7 @@ class LowRankRecon(object):
             # L gradient.
             g_L_j = self.B[j].H(e_t)
             g_L_j *= self.xp.conj(R[j][t])
-            sp.axpy(g_L_j, lamda_j / (self.T), L[j])
+            sp.axpy(g_L_j, lamda_j / self.T, L[j])
             g_L.append(g_L_j)
 
             # R gradient.
@@ -314,13 +309,13 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='Low rank reconstruction.')
     parser.add_argument('--blk_widths', type=int, nargs='+',
-                        default=[50, 100, 200],
+                        default=[32, 64, 128],
                         help='Block widths for low rank.')
     parser.add_argument('--alpha', type=float, default=1,
                         help='Step-size')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay')
-    parser.add_argument('--max_epoch', type=int, default=100,
+    parser.add_argument('--max_epoch', type=int, default=50,
                         help='Maximum epochs.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
