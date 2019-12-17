@@ -138,7 +138,7 @@ class LowRankRecon(object):
                 self.comm.allreduce(img_adj)
 
             img_adj_norm = self.xp.linalg.norm(img_adj).item()
-            self.ksp /= img_adj_norm
+            self.ksp *= (sp.prod(self.img_shape) * self.T)**0.5 / img_adj_norm
 
     def _init_LR(self):
         with self.device:
