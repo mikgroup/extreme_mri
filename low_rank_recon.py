@@ -273,7 +273,7 @@ if __name__ == '__main__':
                         help='Step-size decay')
     parser.add_argument('--eps', type=float, default=1e-2,
                         help='Initialization.')
-    parser.add_argument('--max_epoch', type=int, default=100,
+    parser.add_argument('--max_epoch', type=int, default=90,
                         help='Maximum epochs.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
