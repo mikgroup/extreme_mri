@@ -226,6 +226,7 @@ class LowRankRecon(object):
             for t in np.random.permutation(self.T):
                 g_L, g_R_t, _ = self._gradf(self.L, self.R, t)
                 for j in range(self.J):
+                    g_L[j] *= self.T
                     sp.axpy(self.L[j], -self.alpha / self.G[j], g_L[j])
                     sp.axpy(self.R[j][t], -self.alpha / self.G[j], g_R_t[j])
 
@@ -239,6 +240,7 @@ class LowRankRecon(object):
             for t in range(self.T):
                 g_L_ref, _, _ = self._gradf(self.L_ref, self.R_ref, t)
                 for j in range(self.J):
+                    g_L_ref[j] *= self.T
                     sp.axpy(self.L[j], -self.alpha / self.G[j],
                             self.gradf_L_ref[j] - g_L_ref[j])
 
