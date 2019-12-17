@@ -2,7 +2,6 @@ import argparse
 import logging
 import numpy as np
 import sigpy as sp
-import random
 from math import ceil
 from tqdm.auto import tqdm
 from low_rank_image import LowRankImage
@@ -37,7 +36,7 @@ class LowRankRecon(object):
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
-                 max_epoch=50, max_power_iter=10,
+                 max_epoch=100, max_power_iter=10,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -56,7 +55,6 @@ class LowRankRecon(object):
         self.max_power_iter = max_power_iter
         self.show_pbar = show_pbar and (comm is None or comm.rank == 0)
 
-        random.seed(self.seed)
         np.random.seed(self.seed)
         self.xp = self.device.xp
         with self.device:
@@ -171,7 +169,7 @@ class LowRankRecon(object):
             while not done:
                 try:
                     self._init_LR()
-                    self._svrg()
+                    self._sgd()
                     done = True
                 except OverflowError:
                     self.alpha *= self.beta
@@ -186,71 +184,23 @@ class LowRankRecon(object):
                     [sp.to_device(R_j, sp.cpu_device) for R_j in self.R],
                     self.img_shape)
 
-    def _svrg(self):
-        self.objective_values = []
-        for self.epoch in range(self.max_epoch):
-            self._ref()
-            self._sgd()
-            self._var()
-
-    def _ref(self):
-        with tqdm(desc='Epoch {}/{} REF'.format(self.epoch + 1, self.max_epoch),
-                  total=self.T,
-                  disable=not self.show_pbar,
-                  leave=True) as self.pbar:
-            self.L_ref = []
-            self.R_ref = []
-            self.gradf_L_ref = []
-            for j in range(self.J):
-                self.L_ref.append(self.L[j].copy())
-                self.R_ref.append(self.R[j].copy())
-                self.gradf_L_ref.append(self.xp.zeros_like(self.L[j]))
-
-            loss = 0
-            for t in range(self.T):
-                g_L, _, loss_t = self._gradf_t(self.L_ref, self.R_ref, t)
-                for j in range(self.J):
-                    self.gradf_L_ref[j] += g_L[j]
-
-                loss += loss_t
-                self.pbar.update()
-
-            self.pbar.set_postfix(loss=loss)
-            self.objective_values.append(loss)
-
     def _sgd(self):
-        with tqdm(desc='Epoch {}/{} SGD'.format(self.epoch + 1, self.max_epoch),
-                  total=self.T,
-                  disable=not self.show_pbar,
-                  leave=True) as self.pbar:
-            for t in np.random.permutation(self.T):
-                g_L, g_R_t, _ = self._gradf_t(self.L, self.R, t)
-                for j in range(self.J):
-                    g_L[j] *= self.T
-                    sp.axpy(self.L[j], -self.alpha / self.G[j], g_L[j])
-                    sp.axpy(self.R[j][t], -self.alpha / self.G[j], g_R_t[j])
+        for epoch in range(self.max_epoch):
+            with tqdm(desc='Epoch {}/{} SGD'.format(epoch + 1, self.max_epoch),
+                      total=self.T,
+                      disable=not self.show_pbar,
+                      leave=True) as self.pbar:
+                loss = 0
+                for i, t in enumerate(np.random.permutation(self.T)):
+                    loss += self._update(t)
+                    self.pbar.set_postfix(loss=loss * self.T / (i + 1))
+                    self.pbar.update()
 
-                self.pbar.update()
-
-    def _var(self):
-        with tqdm(desc='Epoch {}/{} VAR'.format(self.epoch + 1, self.max_epoch),
-                  total=self.T,
-                  disable=not self.show_pbar,
-                  leave=True) as self.pbar:
-            for t in range(self.T):
-                g_L_ref, _, _ = self._gradf_t(self.L_ref, self.R_ref, t)
-                for j in range(self.J):
-                    g_L_ref[j] *= self.T
-                    sp.axpy(self.L[j], -self.alpha / self.G[j],
-                            self.gradf_L_ref[j] - g_L_ref[j])
-
-                self.pbar.update()
-
-    def _gradf_t(self, L, R, t):
+    def _update(self, t):
         # Form image.
         img_t = 0
         for j in range(self.J):
-            img_t += self.B[j](L[j] * R[j][t])
+            img_t += self.B[j](self.L[j] * self.R[j][t])
 
         # Download k-space arrays.
         tr_start = t * self.tr_per_frame
@@ -277,35 +227,37 @@ class LowRankRecon(object):
             self.comm.allreduce(e_t)
             self.comm.allreduce(loss_t)
 
-        del img_t, e_tc, mps_c, ksp_t, dcf_t, coord_t
         loss_t = loss_t.item()
 
         # Compute gradient.
-        g_L = []
-        g_R_t = []
         for j in range(self.J):
             lamda_j = self.lamda * self.G[j]
 
             # L gradient.
             g_L_j = self.B[j].H(e_t)
-            g_L_j *= self.xp.conj(R[j][t])
-            sp.axpy(g_L_j, lamda_j / self.T, L[j])
-            g_L.append(g_L_j)
+            g_L_j *= self.xp.conj(self.R[j][t])
+            sp.axpy(g_L_j, lamda_j / self.T, self.L[j])
+            g_L_j *= self.T
 
             # R gradient.
             g_R_jt = self.B[j].H(e_t)
-            g_R_jt *= self.xp.conj(L[j])
+            g_R_jt *= self.xp.conj(self.L[j])
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
-            sp.axpy(g_R_jt, lamda_j, R[j][t])
-            g_R_t.append(g_R_jt)
+            sp.axpy(g_R_jt, lamda_j, self.R[j][t])
 
-            loss_t += lamda_j / self.T * self.xp.linalg.norm(L[j]).item()**2
-            loss_t += lamda_j * self.xp.linalg.norm(R[j][t]).item()**2
+            # Loss.
+            loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
+            loss_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
             if np.isinf(loss_t) or np.isnan(loss_t):
                 raise OverflowError
 
+            # Add.
+            sp.axpy(self.L[j], -self.alpha / self.G[j], g_L_j)
+            sp.axpy(self.R[j][t], -self.alpha / self.G[j], g_R_jt)
+
+
         loss_t /= 2
-        return g_L, g_R_t, loss_t
+        return loss_t
 
 
 if __name__ == '__main__':
@@ -318,7 +270,7 @@ if __name__ == '__main__':
                         help='Step-size')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay')
-    parser.add_argument('--max_epoch', type=int, default=50,
+    parser.add_argument('--max_epoch', type=int, default=100,
                         help='Maximum epochs.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
@@ -327,8 +279,6 @@ if __name__ == '__main__':
                         'Ignore device when toggled.')
     parser.add_argument('--sgw_file', type=str,
                         help='Soft gating weights.')
-    parser.add_argument('--obj_file', type=str,
-                        help='Objective value file.')
 
     parser.add_argument('ksp_file', type=str,
                         help='k-space file.')
@@ -378,5 +328,3 @@ if __name__ == '__main__':
 
     if comm.rank == 0:
         img.save(args.img_file)
-        if args.obj_file is not None:
-            np.save(args.obj_file, app.objective_values)
