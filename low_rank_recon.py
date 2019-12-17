@@ -35,7 +35,7 @@ class LowRankRecon(object):
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[32, 64, 128], alpha=10, beta=0.5, sgw=None,
-                 device=sp.cpu_device, comm=None, seed=0, eps=1e-2,
+                 device=sp.cpu_device, comm=None, seed=0, eps=1e-3,
                  max_epoch=100, max_power_iter=10,
                  show_pbar=True):
         self.ksp = ksp
@@ -266,10 +266,12 @@ if __name__ == '__main__':
     parser.add_argument('--blk_widths', type=int, nargs='+',
                         default=[32, 64, 128],
                         help='Block widths for low rank.')
-    parser.add_argument('--alpha', type=float, default=8,
+    parser.add_argument('--alpha', type=float, default=1,
                         help='Step-size')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay')
+    parser.add_argument('--eps', type=float, default=1e-3,
+                        help='Initialization.')
     parser.add_argument('--max_epoch', type=int, default=100,
                         help='Maximum epochs.')
     parser.add_argument('--device', type=int, default=-1,
@@ -321,7 +323,7 @@ if __name__ == '__main__':
     app = LowRankRecon(ksp, coord, dcf, mps, args.T, args.lamda,
                        sgw=sgw,
                        blk_widths=args.blk_widths,
-                       alpha=args.alpha, beta=args.beta,
+                       alpha=args.alpha, beta=args.beta, eps=args.eps,
                        max_epoch=args.max_epoch,
                        device=device, comm=comm)
     img = app.run()
