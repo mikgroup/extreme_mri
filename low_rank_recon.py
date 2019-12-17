@@ -35,8 +35,8 @@ class LowRankRecon(object):
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[32, 64, 128], alpha=8, beta=0.5, sgw=None,
-                 device=sp.cpu_device, comm=None, seed=0, eps=1e-2, K=30,
-                 max_epoch=90, max_power_iter=10,
+                 device=sp.cpu_device, comm=None, seed=0, eps=1e-2,
+                 max_epoch=100, max_power_iter=10,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -54,7 +54,6 @@ class LowRankRecon(object):
         self.seed = seed
         self.max_epoch = max_epoch
         self.max_power_iter = max_power_iter
-        self.K = K
         self.show_pbar = show_pbar and (comm is None or comm.rank == 0)
 
         np.random.seed(self.seed)
@@ -253,7 +252,7 @@ class LowRankRecon(object):
                 raise OverflowError
 
             # Add.
-            sp.axpy(self.L[j], -self.alpha * self.beta**(self.epoch // self.K), g_L_j)
+            sp.axpy(self.L[j], -self.alpha, g_L_j)
             sp.axpy(self.R[j][t], -self.alpha, g_R_jt)
 
 
@@ -273,7 +272,7 @@ if __name__ == '__main__':
                         help='Step-size decay')
     parser.add_argument('--eps', type=float, default=1e-2,
                         help='Initialization.')
-    parser.add_argument('--max_epoch', type=int, default=90,
+    parser.add_argument('--max_epoch', type=int, default=100,
                         help='Maximum epochs.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
@@ -294,7 +293,7 @@ if __name__ == '__main__':
     parser.add_argument('T', type=int,
                         help='Number of frames.')
     parser.add_argument('lamda', type=float,
-                        help='Regularization. Recommend 1e-8 to start.')
+                        help='Regularization. Recommend 1e-7 to start.')
     parser.add_argument('img_file', type=str,
                         help='Output image file.')
 
