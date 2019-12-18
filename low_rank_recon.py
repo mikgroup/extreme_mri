@@ -34,9 +34,9 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[32, 64, 128], alpha=8, beta=0.5, sgw=None,
-                 device=sp.cpu_device, comm=None, seed=0, eps=1e-2, decay_epoch=50,
-                 max_epoch=150, max_power_iter=10,
+                 blk_widths=[32, 64, 128], alpha=10, beta=0.5, sgw=None,
+                 device=sp.cpu_device, comm=None, seed=0, eps=1e-2,
+                 max_epoch=100, max_power_iter=10,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -54,7 +54,6 @@ class LowRankRecon(object):
         self.seed = seed
         self.max_epoch = max_epoch
         self.max_power_iter = max_power_iter
-        self.decay_epoch = decay_epoch
         self.show_pbar = show_pbar and (comm is None or comm.rank == 0)
 
         np.random.seed(self.seed)
@@ -250,8 +249,7 @@ class LowRankRecon(object):
                 raise OverflowError
 
             # Add.
-            alpha_L = self.alpha * self.beta**(self.epoch // self.decay_epoch)
-            sp.axpy(self.L[j], -alpha_L, g_L_j)
+            sp.axpy(self.L[j], -self.alpha, g_L_j)
             sp.axpy(self.R[j][t], -self.alpha, g_R_jt)
 
         loss_t /= 2
@@ -264,16 +262,14 @@ if __name__ == '__main__':
     parser.add_argument('--blk_widths', type=int, nargs='+',
                         default=[32, 64, 128],
                         help='Block widths for low rank.')
-    parser.add_argument('--alpha', type=float, default=8,
+    parser.add_argument('--alpha', type=float, default=10,
                         help='Step-size')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay')
     parser.add_argument('--eps', type=float, default=1e-2,
                         help='Initialization.')
-    parser.add_argument('--max_epoch', type=int, default=150,
+    parser.add_argument('--max_epoch', type=int, default=100,
                         help='Maximum epochs.')
-    parser.add_argument('--decay_epoch', type=int, default=50,
-                        help='Step decay epochs.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
     parser.add_argument('--multi_gpu', action='store_true',
@@ -293,7 +289,7 @@ if __name__ == '__main__':
     parser.add_argument('T', type=int,
                         help='Number of frames.')
     parser.add_argument('lamda', type=float,
-                        help='Regularization. Recommend 1e-8 to start.')
+                        help='Regularization. Recommend 1e-3 to start.')
     parser.add_argument('img_file', type=str,
                         help='Output image file.')
 
@@ -325,7 +321,6 @@ if __name__ == '__main__':
                        blk_widths=args.blk_widths,
                        alpha=args.alpha, beta=args.beta, eps=args.eps,
                        max_epoch=args.max_epoch,
-                       decay_epoch=args.decay_epoch,
                        device=device, comm=comm)
     img = app.run()
 
