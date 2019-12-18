@@ -35,7 +35,7 @@ class LowRankRecon(object):
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[32, 64, 128], alpha=8, beta=0.5, sgw=None,
-                 device=sp.cpu_device, comm=None, seed=0, eps=1e-2, K=30,
+                 device=sp.cpu_device, comm=None, seed=0, eps=1e-2, decay_epoch=40,
                  max_epoch=120, max_power_iter=10,
                  show_pbar=True):
         self.ksp = ksp
@@ -54,7 +54,7 @@ class LowRankRecon(object):
         self.seed = seed
         self.max_epoch = max_epoch
         self.max_power_iter = max_power_iter
-        self.K = K
+        self.decay_epoch = decay_epoch
         self.show_pbar = show_pbar and (comm is None or comm.rank == 0)
 
         np.random.seed(self.seed)
@@ -170,12 +170,21 @@ class LowRankRecon(object):
             while not done:
                 try:
                     self._init_LR()
-                    self._sgd()
+                    for self.epoch in range(self.max_epoch):
+                        desc = 'Epoch {}/{}'.format(self.epoch + 1, self.max_epoch)
+                        disable = not self.show_pbar
+                        total = self.T
+                        with tqdm(desc=desc, total=total,
+                                  disable=disable, leave=True) as pbar:
+                            loss = 0
+                            for i, t in enumerate(np.random.permutation(self.T)):
+                                loss += self._update(t)
+                                pbar.set_postfix(loss=loss * self.T / (i + 1))
+                                pbar.update()
                     done = True
                 except OverflowError:
                     self.alpha *= self.beta
                     if self.show_pbar:
-                        self.pbar.close()
                         tqdm.write('\nReconstruction diverged. '
                                    'Restart with alpha={}.'.format(self.alpha))
 
@@ -184,18 +193,6 @@ class LowRankRecon(object):
                     [sp.to_device(L_j, sp.cpu_device) for L_j in self.L],
                     [sp.to_device(R_j, sp.cpu_device) for R_j in self.R],
                     self.img_shape)
-
-    def _sgd(self):
-        for self.epoch in range(self.max_epoch):
-            desc = 'Epoch {}/{}'.format(self.epoch + 1, self.max_epoch)
-            disable = not self.show_pbar
-            total = self.T
-            with tqdm(desc=desc, total=total, disable=disable, leave=True) as self.pbar:
-                loss = 0
-                for i, t in enumerate(np.random.permutation(self.T)):
-                    loss += self._update(t)
-                    self.pbar.set_postfix(loss=loss * self.T / (i + 1))
-                    self.pbar.update()
 
     def _update(self, t):
         # Form image.
@@ -253,9 +250,9 @@ class LowRankRecon(object):
                 raise OverflowError
 
             # Add.
-            sp.axpy(self.L[j], -self.alpha * self.beta**(self.epoch // self.K), g_L_j)
+            alpha_L = self.alpha * self.beta**(self.epoch // self.decay_epoch)
+            sp.axpy(self.L[j], -alpha_L, g_L_j)
             sp.axpy(self.R[j][t], -self.alpha, g_R_jt)
-
 
         loss_t /= 2
         return loss_t
@@ -275,6 +272,8 @@ if __name__ == '__main__':
                         help='Initialization.')
     parser.add_argument('--max_epoch', type=int, default=120,
                         help='Maximum epochs.')
+    parser.add_argument('--decay_epoch', type=int, default=40,
+                        help='Step decay epochs.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
     parser.add_argument('--multi_gpu', action='store_true',
@@ -326,6 +325,7 @@ if __name__ == '__main__':
                        blk_widths=args.blk_widths,
                        alpha=args.alpha, beta=args.beta, eps=args.eps,
                        max_epoch=args.max_epoch,
+                       decay_epoch=args.decay_epoch,
                        device=device, comm=comm)
     img = app.run()
 
