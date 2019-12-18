@@ -34,7 +34,7 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[32, 64, 128], alpha=20, beta=0.5, sgw=None,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0, eps=1e-2,
                  max_epoch=100, max_power_iter=10,
                  show_pbar=True):
@@ -112,18 +112,19 @@ class LowRankRecon(object):
     def _normalize(self):
         with self.device:
             # Estimate maximum eigenvalue.
-            coord = sp.to_device(self.coord, self.device)
-            dcf = sp.to_device(self.dcf, self.device)
-            F = sp.linop.NUFFT(self.img_shape, coord)
-            W = sp.linop.Multiply(F.oshape, dcf)
+            coord_t = sp.to_device(self.coord[:self.tr_per_frame], self.device)
+            dcf_t = sp.to_device(self.dcf[:self.tr_per_frame], self.device)
+            F = sp.linop.NUFFT(self.img_shape, coord_t)
+            W = sp.linop.Multiply(F.oshape, dcf_t)
 
             max_eig = sp.app.MaxEig(F.H * W * F, max_iter=self.max_power_iter,
                                     dtype=self.dtype, device=self.device,
                                     show_pbar=self.show_pbar).run()
             self.dcf /= max_eig
-            dcf /= max_eig
+
             # Estimate scaling.
             img_adj = 0
+            dcf = sp.to_device(self.dcf, self.device)
             for c in range(self.C):
                 mps_c = sp.to_device(self.mps[c], self.device)
                 ksp_c = sp.to_device(self.ksp[c], self.device)
@@ -261,7 +262,7 @@ if __name__ == '__main__':
     parser.add_argument('--blk_widths', type=int, nargs='+',
                         default=[32, 64, 128],
                         help='Block widths for low rank.')
-    parser.add_argument('--alpha', type=float, default=20,
+    parser.add_argument('--alpha', type=float, default=1,
                         help='Step-size')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay')
