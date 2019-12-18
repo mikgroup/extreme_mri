@@ -112,19 +112,18 @@ class LowRankRecon(object):
     def _normalize(self):
         with self.device:
             # Estimate maximum eigenvalue.
-            coord_t = sp.to_device(self.coord[:self.tr_per_frame], self.device)
-            dcf_t = sp.to_device(self.dcf[:self.tr_per_frame], self.device)
-            F = sp.linop.NUFFT(self.img_shape, coord_t)
-            W = sp.linop.Multiply(F.oshape, dcf_t)
+            coord = sp.to_device(self.coord, self.device)
+            dcf = sp.to_device(self.dcf, self.device)
+            F = sp.linop.NUFFT(self.img_shape, coord)
+            W = sp.linop.Multiply(F.oshape, dcf)
 
             max_eig = sp.app.MaxEig(F.H * W * F, max_iter=self.max_power_iter,
                                     dtype=self.dtype, device=self.device,
                                     show_pbar=self.show_pbar).run()
             self.dcf /= max_eig
-
+            dcf /= max_eig
             # Estimate scaling.
             img_adj = 0
-            dcf = sp.to_device(self.dcf, self.device)
             for c in range(self.C):
                 mps_c = sp.to_device(self.mps[c], self.device)
                 ksp_c = sp.to_device(self.ksp[c], self.device)
@@ -228,7 +227,7 @@ class LowRankRecon(object):
 
         # Compute gradient.
         for j in range(self.J):
-            lamda_j = self.lamda * self.G[j] / (sp.prod(self.img_shape) * self.T)**0.5
+            lamda_j = self.lamda * self.G[j]
 
             # L gradient.
             g_L_j = self.B[j].H(e_t)
@@ -289,7 +288,7 @@ if __name__ == '__main__':
     parser.add_argument('T', type=int,
                         help='Number of frames.')
     parser.add_argument('lamda', type=float,
-                        help='Regularization. Recommend 1e-4 to start.')
+                        help='Regularization. Recommend 1e-8 to start.')
     parser.add_argument('img_file', type=str,
                         help='Output image file.')
 
