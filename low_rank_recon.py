@@ -36,7 +36,7 @@ class LowRankRecon(object):
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[32, 64, 128], alpha=20, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0, eps=1e-2,
-                 max_epoch=150, max_power_iter=10, decay_epoch=50,
+                 max_epoch=100, max_power_iter=10,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -53,7 +53,6 @@ class LowRankRecon(object):
         self.comm = comm
         self.seed = seed
         self.max_epoch = max_epoch
-        self.decay_epoch = decay_epoch
         self.max_power_iter = max_power_iter
         self.show_pbar = show_pbar and (comm is None or comm.rank == 0)
 
@@ -250,8 +249,7 @@ class LowRankRecon(object):
                 raise OverflowError
 
             # Add.
-            sp.axpy(self.L[j],
-                    -self.alpha * self.beta**(self.epoch // self.decay_epoch), g_L_j)
+            sp.axpy(self.L[j], -self.alpha, g_L_j)
             sp.axpy(self.R[j][t], -self.alpha, g_R_jt)
 
         loss_t /= 2
@@ -272,8 +270,6 @@ if __name__ == '__main__':
                         help='Initialization.')
     parser.add_argument('--max_epoch', type=int, default=150,
                         help='Maximum epochs.')
-    parser.add_argument('--decay_epoch', type=int, default=50,
-                        help='Decay epochs.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
     parser.add_argument('--multi_gpu', action='store_true',
@@ -325,7 +321,6 @@ if __name__ == '__main__':
                        blk_widths=args.blk_widths,
                        alpha=args.alpha, beta=args.beta, eps=args.eps,
                        max_epoch=args.max_epoch,
-                       decay_epoch=args.decay_epoch,
                        device=device, comm=comm)
     img = app.run()
 
