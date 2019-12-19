@@ -27,26 +27,33 @@ To use GPUs, you will need to install `cupy`, a numpy-like package for CUDA, eit
 
 To run the reconstruction, the general pipeline is to:
 
-- run setup script to folder with appropriate numpy arrays (`ksp.npy`, `coord.npy`, `dcf.npy`). (`setup.sh`).
-- automatically select FOV to account for leakage from slab selection (`autofov.py`).
-- perform gridding reconstruction to look at image (`gridding.py`).
-- estimate sensitivity maps using JSENSE (`jsense_recon.py`).
-- running the low rank reconstruction (`low_rank_recon.py`).
+- run setup script to the folder containing numpy arrays (`ksp.npy`, `coord.npy`, `dcf.npy`).
+- automatically select FOV to account for leakage from slab selection.
+- perform gridding reconstruction to look at image.
+- estimate sensitivity maps using JSENSE.
+- running the low rank reconstruction.
 
 
 ## Example Usages
 
-Preprocessing
+Auto FOV and estimate sensitivity maps
 
-	source setup.sh path/to/numpy/arrays
+	source setup.sh path/to/folder/
 	python autofov.py $ksp $coord $dcf --device 0
 	python jsense_recon.py $ksp $coord $dcf $mps --device 0
 	
+Estimate respiratory signal and soft-gating weights with TR of 7.7 ms
+
+	python estimate_resp.py $ksp 0.0077 $resp
+	python soft_gating_weights $resp $sgw
 	
-Low rank reconstruction with 30 frames
+Low rank reconstruction with 500 frames
 
-	python low_rank_recon.py $ksp $coord $dcf $mps 30 $img --device 0
+	python low_rank_recon.py $ksp $coord $dcf $mps 500 $img --device 0
+	
+Low rank reconstruction with 20 frames and soft-gating weights
 
+	python low_rank_recon.py $ksp $coord $dcf $mps 20 $img --device 0 --sgw_file $sgw
 
 Motion resolved reconstruction with 5 bin
 
