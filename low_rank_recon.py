@@ -228,7 +228,7 @@ class LowRankRecon(object):
 
         # Compute gradient.
         for j in range(self.J):
-            lamda_j = self.lamda * self.G[j]
+            lamda_j = self.lamda * self.G[j] / (sp.prod(self.img_shape) * self.T)**0.5
 
             # L gradient.
             g_L_j = self.B[j].H(e_t)
