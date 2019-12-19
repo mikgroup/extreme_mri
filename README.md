@@ -45,7 +45,7 @@ Auto FOV and estimate sensitivity maps
 Estimate respiratory signal and soft-gating weights with TR of 7.7 ms
 
 	python estimate_resp.py $ksp 0.0077 $resp
-	python soft_gating_weights $resp $sgw
+	python soft_gating_weights.py $resp $sgw
 	
 Low rank reconstruction with 500 frames
 
