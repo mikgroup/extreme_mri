@@ -34,9 +34,9 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[32, 64, 128], alpha=10, beta=0.96, sgw=None,
-                 device=sp.cpu_device, comm=None, seed=0, eps=1e-1,
-                 max_epoch=60, max_power_iter=10,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.9, sgw=None,
+                 device=sp.cpu_device, comm=None, seed=0,
+                 max_epoch=60, max_power_iter=5,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -48,7 +48,6 @@ class LowRankRecon(object):
         self.lamda = lamda
         self.alpha = alpha
         self.beta = beta
-        self.eps = eps
         self.device = sp.Device(device)
         self.comm = comm
         self.seed = seed
@@ -138,50 +137,134 @@ class LowRankRecon(object):
             img_adj_norm = self.xp.linalg.norm(img_adj).item()
             self.ksp /= img_adj_norm
 
-    def _init_LR(self):
-        with self.device:
-            self.L = []
-            self.R = []
+    def _init_vars(self):
+        # Initialize L.
+        self.L = []
+        self.R = []
+        for j in range(self.J):
+            L_j_shape = self.B[j].ishape
+            L_j = self.xp.random.standard_normal(L_j_shape).astype(self.dtype)
+            sp.axpy(L_j, 1j,
+                    self.xp.random.standard_normal(L_j_shape).astype(self.dtype))
+            L_j_norm = self.xp.sum(self.xp.abs(L_j)**2,
+                                   axis=range(-self.D, 0), keepdims=True)**0.5
+            L_j /= L_j_norm
+
+            R_j_shape = (self.T, ) + L_j_norm.shape
+            R_j = self.xp.zeros(R_j_shape, dtype=self.dtype)
+            self.L.append(L_j)
+            self.R.append(R_j)
+
+    def _power_method(self):
+        for it in range(self.max_power_iter):
+            # R = A^H(y)^H L
+            with tqdm(desc='PowerIter R {}/{}'.format(it + 1, self.max_power_iter),
+                      total=self.T, disable=not self.show_pbar, leave=True) as pbar:
+                for t in range(self.T):
+                    self._AHyH_L(t)
+                    pbar.update()
+
+            # Normalize R
             for j in range(self.J):
-                L_j_shape = self.B[j].ishape
-                L_j = self.xp.random.standard_normal(L_j_shape).astype(self.dtype)
-                sp.axpy(L_j, 1j,
-                        self.xp.random.standard_normal(L_j_shape).astype(self.dtype))
-                L_j_norm = self.xp.sum(self.xp.abs(L_j)**2,
+                R_j_norm = self.xp.sum(self.xp.abs(self.R[j])**2,
+                                       axis=0, keepdims=True)**0.5
+                self.R[j] /= R_j_norm
+
+            # L = A^H(y) R
+            with tqdm(desc='PowerIter L {}/{}'.format(it + 1, self.max_power_iter),
+                      total=self.T, disable=not self.show_pbar, leave=True) as pbar:
+                for j in range(self.J):
+                    self.L[j].fill(0)
+
+                for t in range(self.T):
+                    self._AHy_R(t)
+                    pbar.update()
+
+            # Normalize L.
+            sigma = []
+            for j in range(self.J):
+                L_j_norm = self.xp.sum(self.xp.abs(self.L[j])**2,
                                        axis=range(-self.D, 0), keepdims=True)**0.5
-                L_j /= L_j_norm
-                L_j *= self.eps
+                self.L[j] /= L_j_norm
+                sigma.append(L_j_norm)
 
-                R_j_shape = (self.T, ) + L_j_norm.shape
-                R_j = self.xp.random.standard_normal(R_j_shape).astype(self.dtype)
-                sp.axpy(R_j, 1j,
-                        self.xp.random.standard_normal(R_j_shape).astype(self.dtype))
-                R_j_norm = self.xp.sum(self.xp.abs(R_j)**2, axis=0, keepdims=True)**0.5
-                R_j /= R_j_norm
-                R_j *= self.eps
+        sigma_max = 0
+        for j in range(self.J):
+            self.L[j] *= sigma[j]**0.5
+            self.R[j] *= sigma[j]**0.5
+            sigma_max = max(sigma_max, sigma[j].max().item())
 
-                self.L.append(L_j)
-                self.R.append(R_j)
+        self.alpha /= sigma_max
+
+    def _AHyH_L(self, t):
+        # Download k-space arrays.
+        tr_start = t * self.tr_per_frame
+        tr_end = (t + 1) * self.tr_per_frame
+        coord_t = sp.to_device(self.coord[tr_start:tr_end], self.device)
+        dcf_t = sp.to_device(self.dcf[tr_start:tr_end], self.device)
+        ksp_t = sp.to_device(self.ksp[:, tr_start:tr_end], self.device)
+
+        # A^H(y_t)
+        AHy_t = 0
+        for c in range(self.C):
+            mps_c = sp.to_device(self.mps[c], self.device)
+            AHy_tc = sp.nufft_adjoint(dcf_t * ksp_t[c], coord_t,
+                                      oshape=self.img_shape)
+            AHy_tc *= self.xp.conj(mps_c)
+            AHy_t += AHy_tc
+
+        if self.comm is not None:
+            self.comm.allreduce(AHy_t)
+
+        for j in range(self.J):
+            AHy_tj= self.B[j].H(AHy_t)
+            self.R[j][t] = self.xp.sum(AHy_tj * self.xp.conj(self.L[j]),
+                                       axis=range(-self.D, 0), keepdims=True)
+
+    def _AHy_R(self, t):
+        # Download k-space arrays.
+        tr_start = t * self.tr_per_frame
+        tr_end = (t + 1) * self.tr_per_frame
+        coord_t = sp.to_device(self.coord[tr_start:tr_end], self.device)
+        dcf_t = sp.to_device(self.dcf[tr_start:tr_end], self.device)
+        ksp_t = sp.to_device(self.ksp[:, tr_start:tr_end], self.device)
+
+        # A^H(y_t)
+        AHy_t = 0
+        for c in range(self.C):
+            mps_c = sp.to_device(self.mps[c], self.device)
+            AHy_tc = sp.nufft_adjoint(dcf_t * ksp_t[c], coord_t,
+                                      oshape=self.img_shape)
+            AHy_tc *= self.xp.conj(mps_c)
+            AHy_t += AHy_tc
+
+        if self.comm is not None:
+            self.comm.allreduce(AHy_t)
+
+        for j in range(self.J):
+            AHy_tj = self.B[j].H(AHy_t)
+            self.L[j] += AHy_tj * self.xp.conj(self.R[j][t])
 
     def run(self):
         with self.device:
+            self._init_vars()
+            self._power_method()
+            self.L_init = []
+            self.R_init = []
+            for j in range(self.J):
+                self.L_init.append(sp.to_device(self.L[j]))
+                self.R_init.append(sp.to_device(self.R[j]))
+
             done = False
             while not done:
                 try:
-                    self._init_LR()
-                    for self.epoch in range(self.max_epoch):
-                        desc = 'Epoch {}/{}'.format(self.epoch + 1, self.max_epoch)
-                        disable = not self.show_pbar
-                        total = self.T
-                        with tqdm(desc=desc, total=total,
-                                  disable=disable, leave=True) as pbar:
-                            loss = 0
-                            for i, t in enumerate(np.random.permutation(self.T)):
-                                loss += self._update(t)
-                                alpha = self.alpha * self.beta**self.epoch
-                                pbar.set_postfix(loss=loss * self.T / (i + 1),
-                                                 alpha=alpha)
-                                pbar.update()
+                    self.L = []
+                    self.R = []
+                    for j in range(self.J):
+                        self.L.append(sp.to_device(self.L_init[j], self.device))
+                        self.R.append(sp.to_device(self.R_init[j], self.device))
+
+                    self._sgd()
                     done = True
                 except OverflowError:
                     self.alpha *= self.beta
@@ -194,6 +277,19 @@ class LowRankRecon(object):
                     [sp.to_device(L_j, sp.cpu_device) for L_j in self.L],
                     [sp.to_device(R_j, sp.cpu_device) for R_j in self.R],
                     self.img_shape)
+
+    def _sgd(self):
+        for self.epoch in range(self.max_epoch):
+            desc = 'Epoch {}/{}'.format(self.epoch + 1, self.max_epoch)
+            disable = not self.show_pbar
+            total = self.T
+            with tqdm(desc=desc, total=total,
+                      disable=disable, leave=True) as pbar:
+                obj = 0
+                for i, t in enumerate(np.random.permutation(self.T)):
+                    obj += self._update(t)
+                    pbar.set_postfix(obj=obj * self.T / (i + 1))
+                    pbar.update()
 
     def _update(self, t):
         # Form image.
@@ -210,13 +306,13 @@ class LowRankRecon(object):
 
         # Data consistency.
         e_t = 0
-        loss_t = 0
+        obj_t = 0
         for c in range(self.C):
             mps_c = sp.to_device(self.mps[c], self.device)
             e_tc = sp.nufft(img_t * mps_c, coord_t)
             e_tc -= ksp_t[c]
             e_tc *= dcf_t**0.5
-            loss_t += self.xp.linalg.norm(e_tc)**2
+            obj_t += self.xp.linalg.norm(e_tc)**2
             e_tc *= dcf_t**0.5
             e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
             e_tc *= self.xp.conj(mps_c)
@@ -224,13 +320,13 @@ class LowRankRecon(object):
 
         if self.comm is not None:
             self.comm.allreduce(e_t)
-            self.comm.allreduce(loss_t)
+            self.comm.allreduce(obj_t)
 
-        loss_t = loss_t.item()
+        obj_t = obj_t.item()
 
         # Compute gradient.
         for j in range(self.J):
-            lamda_j = self.lamda * self.G[j] / (sp.prod(self.img_shape) * self.T)**0.5
+            lamda_j = self.lamda * self.G[j]
 
             # L gradient.
             g_L_j = self.B[j].H(e_t)
@@ -244,19 +340,18 @@ class LowRankRecon(object):
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
             sp.axpy(g_R_jt, lamda_j, self.R[j][t])
 
-            # Loss.
-            loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
-            loss_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
-            if np.isinf(loss_t) or np.isnan(loss_t):
+            # Objective value.
+            obj_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
+            obj_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
+            if np.isinf(obj_t) or np.isnan(obj_t):
                 raise OverflowError
 
             # Add.
-            sp.axpy(self.L[j],
-                    -self.alpha * self.beta**self.epoch, g_L_j)
+            sp.axpy(self.L[j], -self.alpha, g_L_j)
             sp.axpy(self.R[j][t], -self.alpha, g_R_jt)
 
-        loss_t /= 2
-        return loss_t
+        obj_t /= 2
+        return obj_t
 
 
 if __name__ == '__main__':
@@ -264,14 +359,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Low rank reconstruction.')
     parser.add_argument('--blk_widths', type=int, nargs='+', default=[32, 64, 128],
                         help='Block widths for low rank.')
-    parser.add_argument('--alpha', type=float, default=10,
+    parser.add_argument('--alpha', type=float, default=1,
                         help='Step-size')
-    parser.add_argument('--beta', type=float, default=0.96,
-                        help='Step-size decay')
-    parser.add_argument('--eps', type=float, default=1e-1,
-                        help='Initialization.')
+    parser.add_argument('--beta', type=float, default=0.9,
+                        help='Step-size decay.')
     parser.add_argument('--max_epoch', type=int, default=60,
                         help='Maximum epochs.')
+    parser.add_argument('--max_power_iter', type=int, default=5,
+                        help='Maximum power iterations.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
     parser.add_argument('--multi_gpu', action='store_true',
@@ -321,8 +416,10 @@ if __name__ == '__main__':
     app = LowRankRecon(ksp, coord, dcf, mps, args.T, args.lamda,
                        sgw=sgw,
                        blk_widths=args.blk_widths,
-                       alpha=args.alpha, beta=args.beta, eps=args.eps,
+                       alpha=args.alpha,
+                       beta=args.beta,
                        max_epoch=args.max_epoch,
+                       max_power_iter=args.max_power_iter,
                        device=device, comm=comm)
     img = app.run()
 
