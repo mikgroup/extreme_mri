@@ -36,7 +36,7 @@ class LowRankRecon(object):
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
-                 max_epoch=60, max_power_iter=5,
+                 max_epoch=60, max_power_iter=10,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -194,7 +194,7 @@ class LowRankRecon(object):
             self.R[j] *= sigma[j]**0.5
             sigma_max = max(sigma_max, sigma[j].max().item())
 
-        self.alpha /= sigma_max
+        self.alpha /= sigma_max * self.J
 
     def _AHyH_L(self, t):
         # Download k-space arrays.
@@ -365,7 +365,7 @@ if __name__ == '__main__':
                         help='Step-size decay.')
     parser.add_argument('--max_epoch', type=int, default=60,
                         help='Maximum epochs.')
-    parser.add_argument('--max_power_iter', type=int, default=5,
+    parser.add_argument('--max_power_iter', type=int, default=10,
                         help='Maximum power iterations.')
     parser.add_argument('--device', type=int, default=-1,
                         help='Computing device.')
