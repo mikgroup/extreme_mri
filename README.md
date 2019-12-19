@@ -57,4 +57,4 @@ Low rank reconstruction with 20 frames and soft-gating weights
 
 Motion resolved reconstruction with 5 bin
 
-	python motion_resolved_recon.py $ksp $coord $dcf $mps 5 $mrimg --device 0
+	python motion_resolved_recon.py $ksp $coord $dcf $mps $resp 5 $mrimg --device 0
