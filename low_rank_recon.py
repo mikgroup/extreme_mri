@@ -187,7 +187,7 @@ class LowRankRecon(object):
                     self.alpha *= self.beta
                     if self.show_pbar:
                         tqdm.write('\nReconstruction diverged. '
-                                   'Restart with alpha={:%.3g}.'.format(self.alpha))
+                                   'Restart with alpha={:.3g}.'.format(self.alpha))
 
             if self.comm is None or self.comm.rank == 0:
                 return LowRankImage(
