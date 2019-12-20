@@ -194,7 +194,7 @@ class LowRankRecon(object):
             self.R[j] *= sigma[j]**0.5
             sigma_max = max(sigma_max, sigma[j].max().item())
 
-        self.alpha /= sigma_max * self.J
+        self.alpha /= sigma_max
 
     def _AHyH_L(self, t):
         # Download k-space arrays.
