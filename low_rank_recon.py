@@ -52,6 +52,7 @@ class LowRankRecon(object):
         self.comm = comm
         self.seed = seed
         self.max_epoch = max_epoch
+        self.decay_epoch = decay_epoch
         self.max_power_iter = max_power_iter
         self.show_pbar = show_pbar and (comm is None or comm.rank == 0)
 
