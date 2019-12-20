@@ -36,7 +36,7 @@ class LowRankRecon(object):
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
-                 max_epoch=60, max_power_iter=10,
+                 max_epoch=100, max_power_iter=10,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -363,7 +363,7 @@ if __name__ == '__main__':
                         help='Step-size')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay.')
-    parser.add_argument('--max_epoch', type=int, default=60,
+    parser.add_argument('--max_epoch', type=int, default=100,
                         help='Maximum epochs.')
     parser.add_argument('--max_power_iter', type=int, default=10,
                         help='Maximum power iterations.')
