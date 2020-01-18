@@ -286,10 +286,10 @@ class LowRankRecon(object):
             total = self.T
             with tqdm(desc=desc, total=total,
                       disable=disable, leave=True) as pbar:
-                obj = 0
+                loss = 0
                 for i, t in enumerate(np.random.permutation(self.T)):
-                    obj += self._update(t)
-                    pbar.set_postfix(obj=obj * self.T / (i + 1))
+                    loss += self._update(t)
+                    pbar.set_postfix(loss=loss * self.T / (i + 1))
                     pbar.update()
 
     def _update(self, t):
@@ -307,13 +307,13 @@ class LowRankRecon(object):
 
         # Data consistency.
         e_t = 0
-        obj_t = 0
+        loss_t = 0
         for c in range(self.C):
             mps_c = sp.to_device(self.mps[c], self.device)
             e_tc = sp.nufft(img_t * mps_c, coord_t)
             e_tc -= ksp_t[c]
             e_tc *= dcf_t**0.5
-            obj_t += self.xp.linalg.norm(e_tc)**2
+            loss_t += self.xp.linalg.norm(e_tc)**2
             e_tc *= dcf_t**0.5
             e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
             e_tc *= self.xp.conj(mps_c)
@@ -321,9 +321,9 @@ class LowRankRecon(object):
 
         if self.comm is not None:
             self.comm.allreduce(e_t)
-            self.comm.allreduce(obj_t)
+            self.comm.allreduce(loss_t)
 
-        obj_t = obj_t.item()
+        loss_t = loss_t.item()
 
         # Compute gradient.
         for j in range(self.J):
@@ -341,10 +341,10 @@ class LowRankRecon(object):
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
             sp.axpy(g_R_jt, lamda_j, self.R[j][t])
 
-            # Objective value.
-            obj_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
-            obj_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
-            if np.isinf(obj_t) or np.isnan(obj_t):
+            # Loss.
+            loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
+            loss_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
+            if np.isinf(loss_t) or np.isnan(loss_t):
                 raise OverflowError
 
             # Add.
@@ -352,8 +352,8 @@ class LowRankRecon(object):
                     -self.alpha * self.beta**(self.epoch // self.decay_epoch), g_L_j)
             sp.axpy(self.R[j][t], -self.alpha, g_R_jt)
 
-        obj_t /= 2
-        return obj_t
+        loss_t /= 2
+        return loss_t
 
 
 if __name__ == '__main__':
