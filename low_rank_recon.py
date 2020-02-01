@@ -125,10 +125,11 @@ class LowRankRecon(object):
             # Estimate scaling.
             img_adj = 0
             dcf = sp.to_device(self.dcf, self.device)
+            coord = sp.to_device(self.coord, self.device)
             for c in range(self.C):
                 mps_c = sp.to_device(self.mps[c], self.device)
                 ksp_c = sp.to_device(self.ksp[c], self.device)
-                img_adj_c = sp.nufft_adjoint(ksp_c * dcf, self.coord, self.img_shape)
+                img_adj_c = sp.nufft_adjoint(ksp_c * dcf, coord, self.img_shape)
                 img_adj_c *= self.xp.conj(mps_c)
                 img_adj += img_adj_c
 
