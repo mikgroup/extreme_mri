@@ -144,9 +144,7 @@ class LowRankRecon(object):
         self.R = []
         for j in range(self.J):
             L_j_shape = self.B[j].ishape
-            L_j = self.xp.random.standard_normal(L_j_shape).astype(self.dtype)
-            sp.axpy(L_j, 1j,
-                    self.xp.random.standard_normal(L_j_shape).astype(self.dtype))
+            L_j = sp.randn(L_j_shape, dtype=self.dtype, device=self.device)
             L_j_norm = self.xp.sum(self.xp.abs(L_j)**2,
                                    axis=range(-self.D, 0), keepdims=True)**0.5
             L_j /= L_j_norm
@@ -332,14 +330,14 @@ class LowRankRecon(object):
             # L gradient.
             g_L_j = self.B[j].H(e_t)
             g_L_j *= self.xp.conj(self.R[j][t])
-            sp.axpy(g_L_j, lamda_j / self.T, self.L[j])
+            g_L_j += lamda_j / self.T * self.L[j]
             g_L_j *= self.T
 
             # R gradient.
             g_R_jt = self.B[j].H(e_t)
             g_R_jt *= self.xp.conj(self.L[j])
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
-            sp.axpy(g_R_jt, lamda_j, self.R[j][t])
+            g_R_jt += lamda_j * self.R[j][t]
 
             # Loss.
             loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
@@ -348,9 +346,8 @@ class LowRankRecon(object):
                 raise OverflowError
 
             # Add.
-            sp.axpy(self.L[j],
-                    -self.alpha * self.beta**(self.epoch // self.decay_epoch), g_L_j)
-            sp.axpy(self.R[j][t], -self.alpha, g_R_jt)
+            self.L[j] -= self.alpha * self.beta**(self.epoch // self.decay_epoch) * g_L_j
+            self.R[j][t] -= self.alpha * g_R_jt
 
         loss_t /= 2
         return loss_t
