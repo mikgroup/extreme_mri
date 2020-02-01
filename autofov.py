@@ -5,7 +5,7 @@ import logging
 
 
 def autofov(ksp, coord, dcf, nro=100, device=sp.cpu_device,
-            thresh=0.2, pad=1.0):
+            thresh=0.1, pad=1.0):
     device = sp.Device(device)
     xp = device.xp
     with device:
@@ -45,7 +45,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--nro', type=int, default=100)
     parser.add_argument('--device', type=int, default=-1)
-    parser.add_argument('--thresh', type=float, default=0.2)
+    parser.add_argument('--thresh', type=float, default=0.1)
     parser.add_argument('--pad', type=float, default=1.0)
 
     parser.add_argument('ksp_file', type=str)
