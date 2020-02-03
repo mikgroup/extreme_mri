@@ -85,7 +85,8 @@ class LowRankRecon(object):
             i_j = [ceil((i - b + s) / s) * s + b - s
                    for i, b, s in zip(self.img_shape, b_j, s_j)]
 
-            C_j = sp.linop.Resize(self.img_shape, i_j)
+            C_j = sp.linop.Resize(self.img_shape, i_j,
+                                  ishift=[0] * self.D, oshift=[0] * self.D)
             B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
             w_j = sp.hanning(b_j, dtype=self.dtype, device=self.device)**0.5
             W_j = sp.linop.Multiply(B_j.ishape, w_j)

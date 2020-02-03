@@ -29,12 +29,12 @@ class LowRankImage(object):
         self.L = L
         self.R = R
         self.device = sp.cpu_device
-        
+
     def use_device(self, device):
         self.device = sp.Device(device)
         self.L = [sp.to_device(L_j, self.device) for L_j in self.L]
         self.R = [sp.to_device(R_j, self.device) for R_j in self.R]
-        
+
     def __len__(self):
         return self.T
 
@@ -89,11 +89,13 @@ def _get_B(img_shape, T, blk_widths, dtype=np.complex64):
     """
     B = []
     J = len(blk_widths)
+    D = len(img_shape)
     for j in range(J):
         i_j, b_j, s_j, n_j, G_j = _get_bparams(
             img_shape, T, blk_widths[j])
 
-        C_j = sp.linop.Resize(img_shape, i_j)
+        C_j = sp.linop.Resize(img_shape, i_j,
+                              ishift=[0] * D, oshift=[0] * D)
         B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
         W_j = sp.linop.Multiply(B_j.ishape, sp.hanning(b_j, dtype=dtype)**0.5)
         B.append(C_j * B_j * W_j)
