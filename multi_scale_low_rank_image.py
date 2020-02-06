@@ -5,19 +5,24 @@ from math import ceil
 
 
 class MultiScaleLowRankImage(object):
-    """Low rank image representation.
+    """Multi-scale low rank image.
 
     Args:
-        L (np.array): Left singular vectors of length J.
-            Each scale is of shape [T] + n_j + b_j.
-        R (np.array): Right singular vectors of length J.
-            Each scale is of shape [T] + n_j + [1] * num_img_dim.
-        img_shape (tuple of ints): Image shape.
+        shape (tuple of ints): image shape.
+        L (list of arrays): Left singular vectors of length J.
+            Each scale is of shape n_j + b_j.
+            where n_j represents the number of blocks,
+            and b_j represents the block shape.
+        R (list of arrays): Right singular vectors of length J.
+            Each scale is of shape [T] + n_j + [1] * D
+            where T is the number of frames,
+            n_j represents the number of blocks,
+            and D represents the number of spatial dimensions.
+        res (None of tuple of floats): resolution.
 
     """
     def __init__(self, shape, L, R, res=None):
         self.shape = tuple(shape)
-        self.img_shape = self.shape[1:]
         self.T = self.shape[0]
         self.size = sp.prod(self.shape)
         self.ndim = len(self.shape)
@@ -41,7 +46,7 @@ class MultiScaleLowRankImage(object):
     def _get_B(self):
         B = []
         for j in range(self.J):
-            b_j = [min(i, self.blk_widths[j]) for i in self.img_shape]
+            b_j = [min(i, self.blk_widths[j]) for i in self.shape[1:]]
             s_j = [(b + 1) // 2 for b in b_j]
 
             i_j = [ceil((i - b + s) / s) * s + b - s

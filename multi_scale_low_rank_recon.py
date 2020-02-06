@@ -14,7 +14,7 @@ except:
 
 
 class MultiScaleLowRankRecon(object):
-    r"""Low rank reconstruction.
+    r"""Multi-scale low rank reconstruction.
 
     Considers the objective function,
 
@@ -25,12 +25,28 @@ class MultiScaleLowRankRecon(object):
     where :math:`\mathcal{A}_t` is the forward operator for time :math:`t`.
 
     Args:
-        ksp (array): k-space measurements of shape (num_tr, num_ro, img_ndim).
-        coord (array): coordinates.
-        dcf (array): dcf.
-        mps (array): sensitivity maps of shape (C, ...).
+        ksp (array): k-space measurements of shape (C, num_tr, num_ro, D).
+            where C is the number of channels,
+            num_tr is the number of TRs, num_ro is the readout points,
+            and D is the number of spatial dimensions.
+        coord (array): k-space coordinates of shape (num_tr, num_ro, D).
+        dcf (array): density compensation factor of shape (num_tr, num_ro).
+        mps (array): sensitivity maps of shape (C, N_D, ..., N_1).
+            where (N_D, ..., N_1) represents the image shape.
         T (int): number of frames.
-        J (int): number of multi-scale levels.
+        lamda (float): regularization parameter.
+        blk_widths (tuple of ints): block widths for multi-scale low rank.
+        alpha (float): initial step-size.
+        beta (float): step-size decay factor.
+        sgw (None or array): soft-gating weights.
+            Shape should be compatible with dcf.
+        device (sp.Device): computing device.
+        comm (None or sp.Communicator): distributed communicator.
+        seed (int): random seed.
+        max_epoch (int): maximum number of epochs.
+        decay_epoch (int): number of epochs to decay step-size.
+        max_power_iter (int): maximum number of power iteration.
+        show_pbar (bool): show progress bar.
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
