@@ -2,6 +2,11 @@
 
 This repo contains scripts to reproduce some experiments in [Extreme MRI](https://arxiv.org/abs/1909.13482). It uses the Python package [sigpy](https://github.com/mikgroup/sigpy).
 
+# Colab Demo
+
+To start, we recommend trying the demo notebook in Google Colab: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mikgroup/extreme_mri/blob/master/colab-demo.ipynb). Colab comes with a GPU environment setup.
+
+# Running locally on command line
 
 ## Installation
 
