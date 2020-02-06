@@ -37,31 +37,24 @@ class MultiScaleLowRankImage(object):
         if res is None:
             self.res = (1, ) * self.D
 
-        self.B = self._get_B()
-
     def use_device(self, device):
         self.device = sp.Device(device)
         self.L = [sp.to_device(L_j, self.device) for L_j in self.L]
         self.R = [sp.to_device(R_j, self.device) for R_j in self.R]
-        self.B = self._get_B()
 
-    def _get_B(self):
-        B = []
-        for j in range(self.J):
-            b_j = [min(i, self.blk_widths[j]) for i in self.img_shape]
-            s_j = [(b + 1) // 2 for b in b_j]
+    def _get_B(self, j):
+        b_j = [min(i, self.blk_widths[j]) for i in self.img_shape]
+        s_j = [(b + 1) // 2 for b in b_j]
 
-            i_j = [ceil((i - b + s) / s) * s + b - s
-                   for i, b, s in zip(self.img_shape, b_j, s_j)]
+        i_j = [ceil((i - b + s) / s) * s + b - s
+               for i, b, s in zip(self.img_shape, b_j, s_j)]
 
-            C_j = sp.linop.Resize(self.img_shape, i_j,
-                                  ishift=[0] * self.D, oshift=[0] * self.D)
-            B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
-            w_j = sp.triang(b_j, dtype=self.dtype, device=self.device)
-            W_j = sp.linop.Multiply(B_j.ishape, w_j)
-            B.append(C_j * B_j * W_j)
-
-        return B
+        C_j = sp.linop.Resize(self.img_shape, i_j,
+                              ishift=[0] * self.D, oshift=[0] * self.D)
+        B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
+        w_j = sp.triang(b_j, dtype=self.dtype, device=self.device)
+        W_j = sp.linop.Multiply(B_j.ishape, w_j)
+        return C_j * B_j * W_j
 
     def __len__(self):
         return self.T
@@ -70,7 +63,8 @@ class MultiScaleLowRankImage(object):
         with self.device:
             img_t = 0
             for j in range(self.J):
-                img_t += self.B[j](self.L[j] * self.R[j][t])[idx]
+                B_j = self._get_B(j)
+                img_t += self.L[j] * self.R[j][t])[idx]
 
         img_t = sp.to_device(img_t, sp.cpu_device)
         return img_t

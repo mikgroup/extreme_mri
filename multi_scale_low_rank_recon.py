@@ -86,45 +86,36 @@ class MultiScaleLowRankRecon(object):
         if self.sgw is not None:
             self.dcf *= np.expand_dims(self.sgw, -1)
 
-        with self.device:
-            self.B = self._get_B()
-            self.G = self._get_G()
+        self.B = [self._get_B(j) for j in range(self.J)]
+        self.G = [self._get_G(j) for j in range(self.J)]
 
         self._normalize()
 
-    def _get_B(self):
-        B = []
-        for j in range(self.J):
-            b_j = [min(i, self.blk_widths[j]) for i in self.img_shape]
-            s_j = [(b + 1) // 2 for b in b_j]
+    def _get_B(self, j):
+        b_j = [min(i, self.blk_widths[j]) for i in self.img_shape]
+        s_j = [(b + 1) // 2 for b in b_j]
 
-            i_j = [ceil((i - b + s) / s) * s + b - s
-                   for i, b, s in zip(self.img_shape, b_j, s_j)]
+        i_j = [ceil((i - b + s) / s) * s + b - s
+               for i, b, s in zip(self.img_shape, b_j, s_j)]
 
-            C_j = sp.linop.Resize(self.img_shape, i_j,
-                                  ishift=[0] * self.D, oshift=[0] * self.D)
-            B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
-            w_j = sp.triang(b_j, dtype=self.dtype, device=self.device)
-            W_j = sp.linop.Multiply(B_j.ishape, w_j)
-            B.append(C_j * B_j * W_j)
+        C_j = sp.linop.Resize(self.img_shape, i_j,
+                              ishift=[0] * self.D, oshift=[0] * self.D)
+        B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
+        w_j = sp.triang(b_j, dtype=self.dtype, device=self.device)
+        W_j = sp.linop.Multiply(B_j.ishape, w_j)
+        return C_j * B_j * W_j
 
-        return B
+    def _get_G(self, j):
+        b_j = [min(i, self.blk_widths[j]) for i in self.img_shape]
+        s_j = [(b + 1) // 2 for b in b_j]
 
-    def _get_G(self):
-        G = []
-        for j in range(self.J):
-            b_j = [min(i, self.blk_widths[j]) for i in self.img_shape]
-            s_j = [(b + 1) // 2 for b in b_j]
+        i_j = [ceil((i - b + s) / s) * s + b - s
+               for i, b, s in zip(self.img_shape, b_j, s_j)]
+        n_j = [(i - b + s) // s for i, b, s in zip(i_j, b_j, s_j)]
 
-            i_j = [ceil((i - b + s) / s) * s + b - s
-                   for i, b, s in zip(self.img_shape, b_j, s_j)]
-            n_j = [(i - b + s) // s for i, b, s in zip(i_j, b_j, s_j)]
-
-            M_j = sp.prod(b_j)
-            P_j = sp.prod(n_j)
-            G.append(M_j**0.5 + self.T**0.5 + (2 * np.log(P_j))**0.5)
-
-        return G
+        M_j = sp.prod(b_j)
+        P_j = sp.prod(n_j)
+        return M_j**0.5 + self.T**0.5 + (2 * np.log(P_j))**0.5)
 
     def _normalize(self):
         with self.device:
