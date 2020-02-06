@@ -23,6 +23,7 @@ class MultiScaleLowRankImage(object):
     """
     def __init__(self, shape, L, R, res=None):
         self.shape = tuple(shape)
+        self.img_shape = self.shape[1:]
         self.T = self.shape[0]
         self.size = sp.prod(self.shape)
         self.ndim = len(self.shape)
@@ -47,7 +48,7 @@ class MultiScaleLowRankImage(object):
     def _get_B(self):
         B = []
         for j in range(self.J):
-            b_j = [min(i, self.blk_widths[j]) for i in self.shape[1:]]
+            b_j = [min(i, self.blk_widths[j]) for i in self.img_shape]
             s_j = [(b + 1) // 2 for b in b_j]
 
             i_j = [ceil((i - b + s) / s) * s + b - s
