@@ -4,14 +4,31 @@ import sigpy as sp
 import logging
 
 
-def autofov(ksp, coord, dcf, nro=100, device=sp.cpu_device,
-            thresh=0.1, pad=1.0):
+def autofov(ksp, coord, dcf, num_ro=100, device=sp.cpu_device,
+            thresh=0.1):
+    """Automatic estimation of FOV.
+
+    FOV is estimated by thresholding a low resolution gridded image.
+    coord will be modified in-place.
+
+    Args:
+        ksp (array): k-space measurements of shape (C, num_tr, num_ro, D).
+            where C is the number of channels,
+            num_tr is the number of TRs, num_ro is the readout points,
+            and D is the number of spatial dimensions.
+        coord (array): k-space coordinates of shape (num_tr, num_ro, D).
+        dcf (array): density compensation factor of shape (num_tr, num_ro).
+        num_ro (int): number of read-out points.
+        device (Device): computing device.
+        thresh (float): threshold between 0 and 1.
+
+    """
     device = sp.Device(device)
     xp = device.xp
     with device:
-        kspc = ksp[:, :, :nro]
-        coordc = coord[:, :nro, :]
-        dcfc = dcf[:, :nro]
+        kspc = ksp[:, :, :num_ro]
+        coordc = coord[:, :num_ro, :]
+        dcfc = dcf[:, :num_ro]
         coordc2 = coordc * 2
 
         num_coils = len(kspc)
@@ -35,7 +52,6 @@ def autofov(ksp, coord, dcf, nro=100, device=sp.cpu_device,
                                for i in range(imgc2.ndim)])
 
         img_scale = boxc_shape / imgc_shape
-        coord *= img_scale * pad
 
 
 if __name__ == '__main__':
@@ -43,10 +59,9 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--nro', type=int, default=100)
+    parser.add_argument('--num_ro', type=int, default=100)
     parser.add_argument('--device', type=int, default=-1)
     parser.add_argument('--thresh', type=float, default=0.1)
-    parser.add_argument('--pad', type=float, default=1.0)
 
     parser.add_argument('ksp_file', type=str)
     parser.add_argument('coord_file', type=str)
@@ -58,8 +73,8 @@ if __name__ == '__main__':
     coord = np.load(args.coord_file)
     dcf = np.load(args.dcf_file)
 
-    autofov(ksp, coord, dcf, nro=args.nro, device=args.device,
-            thresh=args.thresh, pad=args.pad)
+    autofov(ksp, coord, dcf, num_ro=args.num_ro, device=args.device,
+            thresh=args.thresh)
 
     logging.info('Image shape: {}'.format(sp.estimate_shape(coord)))
 
