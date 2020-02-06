@@ -1,6 +1,6 @@
 # Extreme MRI
 
-This repo contains scripts to perform extreme MRI reconstruction. It uses the python package [sigpy](https://github.com/mikgroup/sigpy)
+This repo contains scripts to reproduce some experiments in [Extreme MRI](https://arxiv.org/abs/1909.13482). It uses the Python package [sigpy](https://github.com/mikgroup/sigpy).
 
 
 ## Installation
@@ -9,7 +9,7 @@ Install `sigpy` using pip:
 
 	pip install sigpy
 	
-To use GPUs, you will need to install `cupy`, a numpy-like package for CUDA, either through conda or pip:
+GPU is recommended for running extreme MRI reconstruction. To do so, you will need to install [cupy](https://cupy.chainer.org), a numpy-like package for CUDA, either through conda or pip:
 
 	pip install cupy
 	
