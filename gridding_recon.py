@@ -47,6 +47,7 @@ def gridding_recon(ksp, coord, dcf, T=1, device=sp.cpu_device):
             img_t = img_t**0.5
             img.append(sp.to_device(img_t))
 
+    img = np.stack(img)
     return img
 
 
