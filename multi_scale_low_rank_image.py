@@ -30,12 +30,13 @@ class MultiScaleLowRankImage(object):
         self.J = len(L)
         self.D = self.ndim - 1
         self.blk_widths = [max(L[j].shape[-self.D:]) for j in range(self.J)]
-        self.B = self._get_B()
         self.L = L
         self.R = R
         self.device = sp.cpu_device
         if res is None:
             self.res = (1, ) * self.D
+
+        self.B = self._get_B()
 
     def use_device(self, device):
         self.device = sp.Device(device)
