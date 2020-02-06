@@ -24,7 +24,7 @@ def gridding_recon(ksp, coord, dcf, T=1, device=sp.cpu_device):
     device = sp.Device(device)
     xp = device.xp
     num_coils, num_tr, num_ro = ksp.shape
-    tr_per_frame = num_tr // args.num_frames
+    tr_per_frame = num_tr // T
     img_shape = sp.estimate_shape(coord)
 
     with device:
@@ -46,6 +46,8 @@ def gridding_recon(ksp, coord, dcf, T=1, device=sp.cpu_device):
 
             img_t = img_t**0.5
             img.append(sp.to_device(img_t))
+
+    return img
 
 
 if __name__ == '__main__':
