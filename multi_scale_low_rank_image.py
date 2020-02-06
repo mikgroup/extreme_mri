@@ -64,7 +64,7 @@ class MultiScaleLowRankImage(object):
             img_t = 0
             for j in range(self.J):
                 B_j = self._get_B(j)
-                img_t += self.L[j] * self.R[j][t])[idx]
+                img_t += B_j(self.L[j] * self.R[j][t])[idx]
 
         img_t = sp.to_device(img_t, sp.cpu_device)
         return img_t
