@@ -4,7 +4,7 @@ import numpy as np
 import sigpy as sp
 from math import ceil
 from tqdm.auto import tqdm
-from low_rank_image import LowRankImage
+from multi_scale_low_rank_image import MultiScaleLowRankImage
 
 try:
     import mkl
@@ -13,7 +13,7 @@ except:
     pass
 
 
-class LowRankRecon(object):
+class MultiScaleLowRankRecon(object):
     r"""Low rank reconstruction.
 
     Considers the objective function,
@@ -34,7 +34,7 @@ class LowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[64, 128, 256], alpha=1, beta=0.5, sgw=None,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
                  max_epoch=90, decay_epoch=30, max_power_iter=5,
                  show_pbar=True):
@@ -88,7 +88,7 @@ class LowRankRecon(object):
             C_j = sp.linop.Resize(self.img_shape, i_j,
                                   ishift=[0] * self.D, oshift=[0] * self.D)
             B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
-            w_j = sp.hanning(b_j, dtype=self.dtype, device=self.device)**0.5
+            w_j = sp.triang(b_j, dtype=self.dtype, device=self.device)
             W_j = sp.linop.Multiply(B_j.ishape, w_j)
             B.append(C_j * B_j * W_j)
 
@@ -159,7 +159,8 @@ class LowRankRecon(object):
     def _power_method(self):
         for it in range(self.max_power_iter):
             # R = A^H(y)^H L
-            with tqdm(desc='PowerIter R {}/{}'.format(it + 1, self.max_power_iter),
+            with tqdm(desc='PowerIter R {}/{}'.format(
+                    it + 1, self.max_power_iter),
                       total=self.T, disable=not self.show_pbar, leave=True) as pbar:
                 for t in range(self.T):
                     self._AHyH_L(t)
@@ -172,7 +173,8 @@ class LowRankRecon(object):
                 self.R[j] /= R_j_norm
 
             # L = A^H(y) R
-            with tqdm(desc='PowerIter L {}/{}'.format(it + 1, self.max_power_iter),
+            with tqdm(desc='PowerIter L {}/{}'.format(
+                    it + 1, self.max_power_iter),
                       total=self.T, disable=not self.show_pbar, leave=True) as pbar:
                 for j in range(self.J):
                     self.L[j].fill(0)
@@ -274,10 +276,10 @@ class LowRankRecon(object):
                                    'Restart with alpha={:.3g}.'.format(self.alpha))
 
             if self.comm is None or self.comm.rank == 0:
-                return LowRankImage(
+                return MultiScaleLowRankImage(
+                    (self.T, ) + self.img_shape,
                     [sp.to_device(L_j, sp.cpu_device) for L_j in self.L],
-                    [sp.to_device(R_j, sp.cpu_device) for R_j in self.R],
-                    self.img_shape)
+                    [sp.to_device(R_j, sp.cpu_device) for R_j in self.R])
 
     def _sgd(self):
         for self.epoch in range(self.max_epoch):
@@ -357,8 +359,9 @@ class LowRankRecon(object):
 
 if __name__ == '__main__':
 
-    parser = argparse.ArgumentParser(description='Low rank reconstruction.')
-    parser.add_argument('--blk_widths', type=int, nargs='+', default=[64, 128, 256],
+    parser = argparse.ArgumentParser(
+        description='Multi-Scale Low rank reconstruction.')
+    parser.add_argument('--blk_widths', type=int, nargs='+', default=[32, 64, 128],
                         help='Block widths for low rank.')
     parser.add_argument('--alpha', type=float, default=1,
                         help='Step-size')
@@ -416,15 +419,15 @@ if __name__ == '__main__':
     ksp = ksp[comm.rank::comm.size].copy()
     mps = mps[comm.rank::comm.size].copy()
 
-    app = LowRankRecon(ksp, coord, dcf, mps, args.T, args.lamda,
-                       sgw=sgw,
-                       blk_widths=args.blk_widths,
-                       alpha=args.alpha,
-                       beta=args.beta,
-                       max_epoch=args.max_epoch,
-                       decay_epoch=args.decay_epoch,
-                       max_power_iter=args.max_power_iter,
-                       device=device, comm=comm)
+    app = MultiScaleLowRankRecon(ksp, coord, dcf, mps, args.T, args.lamda,
+                                 sgw=sgw,
+                                 blk_widths=args.blk_widths,
+                                 alpha=args.alpha,
+                                 beta=args.beta,
+                                 max_epoch=args.max_epoch,
+                                 decay_epoch=args.decay_epoch,
+                                 max_power_iter=args.max_power_iter,
+                                 device=device, comm=comm)
     img = app.run()
 
     if comm.rank == 0:

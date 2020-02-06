@@ -49,11 +49,11 @@ Estimate respiratory signal and soft-gating weights with TR of 7.7 ms
 	
 Low rank reconstruction with 500 frames
 
-	python low_rank_recon.py $ksp $coord $dcf $mps 500 $img --device 0
+	python multi_scale_low_rank_recon.py $ksp $coord $dcf $mps 500 $img --device 0
 	
 Low rank reconstruction with 20 frames and soft-gating weights
 
-	python low_rank_recon.py $ksp $coord $dcf $mps 20 $img --device 0 --sgw_file $sgw
+	python multi_scale_low_rank_recon.py $ksp $coord $dcf $mps 20 $img --device 0 --sgw_file $sgw
 
 Motion resolved reconstruction with 5 bin
 
