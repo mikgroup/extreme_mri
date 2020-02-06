@@ -115,7 +115,7 @@ class MultiScaleLowRankRecon(object):
 
         M_j = sp.prod(b_j)
         P_j = sp.prod(n_j)
-        return M_j**0.5 + self.T**0.5 + (2 * np.log(P_j))**0.5)
+        return M_j**0.5 + self.T**0.5 + (2 * np.log(P_j))**0.5
 
     def _normalize(self):
         with self.device:
