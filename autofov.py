@@ -52,6 +52,7 @@ def autofov(ksp, coord, dcf, num_ro=100, device=sp.cpu_device,
                                for i in range(imgc2.ndim)])
 
         img_scale = boxc_shape / imgc_shape
+        coord *= img_scale
 
 
 if __name__ == '__main__':
