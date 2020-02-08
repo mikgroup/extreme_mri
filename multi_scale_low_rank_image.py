@@ -52,7 +52,7 @@ class MultiScaleLowRankImage(object):
         C_j = sp.linop.Resize(self.img_shape, i_j,
                               ishift=[0] * self.D, oshift=[0] * self.D)
         B_j = sp.linop.BlocksToArray(i_j, b_j, s_j)
-        w_j = sp.triang(b_j, dtype=self.dtype, device=self.device)
+        w_j = sp.hanning(b_j, dtype=self.dtype, device=self.device)**0.5
         W_j = sp.linop.Multiply(B_j.ishape, w_j)
         return C_j * B_j * W_j
 
