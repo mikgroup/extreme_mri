@@ -36,6 +36,7 @@ class MultiScaleLowRankRecon(object):
         T (int): number of frames.
         lamda (float): regularization parameter.
         blk_widths (tuple of ints): block widths for multi-scale low rank.
+        alpha (float): initial step-size.
         beta (float): step-size decay factor.
         sgw (None or array): soft-gating weights.
             Shape should be compatible with dcf.
@@ -49,9 +50,9 @@ class MultiScaleLowRankRecon(object):
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[32, 64, 128], beta=0.5, sgw=None,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
-                 max_epoch=120, decay_epoch=30, max_power_iter=5,
+                 max_epoch=90, decay_epoch=30, max_power_iter=5,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -61,6 +62,7 @@ class MultiScaleLowRankRecon(object):
         self.blk_widths = blk_widths
         self.T = T
         self.lamda = lamda
+        self.alpha = alpha
         self.beta = beta
         self.device = sp.Device(device)
         self.comm = comm
@@ -197,9 +199,13 @@ class MultiScaleLowRankRecon(object):
                 self.L[j] /= L_j_norm
                 sigma.append(L_j_norm)
 
+        sigma_max = 0
         for j in range(self.J):
             self.L[j] *= sigma[j]**0.5
             self.R[j] *= sigma[j]**0.5
+            sigma_max = max(sigma_max, sigma[j].max().item())
+
+        self.alpha /= sigma_max
 
     def _AHyH_L(self, t):
         # Download k-space arrays.
@@ -254,7 +260,28 @@ class MultiScaleLowRankRecon(object):
         with self.device:
             self._init_vars()
             self._power_method()
-            self._sgd()
+            self.L_init = []
+            self.R_init = []
+            for j in range(self.J):
+                self.L_init.append(sp.to_device(self.L[j]))
+                self.R_init.append(sp.to_device(self.R[j]))
+
+            done = False
+            while not done:
+                try:
+                    self.L = []
+                    self.R = []
+                    for j in range(self.J):
+                        self.L.append(sp.to_device(self.L_init[j], self.device))
+                        self.R.append(sp.to_device(self.R_init[j], self.device))
+
+                    self._sgd()
+                    done = True
+                except OverflowError:
+                    self.alpha *= self.beta
+                    if self.show_pbar:
+                        tqdm.write('\nReconstruction diverged. '
+                                   'Scaling step-size by {}.'.format(self.beta))
 
             if self.comm is None or self.comm.rank == 0:
                 return MultiScaleLowRankImage(
@@ -330,15 +357,9 @@ class MultiScaleLowRankRecon(object):
             if np.isinf(loss_t) or np.isnan(loss_t):
                 raise OverflowError
 
-            # Calculate step-size.
-            alpha_L_j = 1 / (self.xp.sum(self.xp.abs(self.R[j])**2, axis=0) + lamda_j)
-            alpha_L_j *= self.beta**(self.epoch // self.decay_epoch)
-            alpha_R_jt = 1 / (
-                self.xp.sum(self.xp.abs(self.L[j])**2, axis=range(-self.D, 0), keepdims=True) + lamda_j)
-
             # Add.
-            self.L[j] -= alpha_L_j * g_L_j
-            self.R[j][t] -= alpha_R_jt * g_R_jt
+            self.L[j] -= self.alpha * self.beta**(self.epoch // self.decay_epoch) * g_L_j
+            self.R[j][t] -= self.alpha * g_R_jt
 
         loss_t /= 2
         return loss_t
@@ -350,9 +371,11 @@ if __name__ == '__main__':
         description='Multi-Scale Low rank reconstruction.')
     parser.add_argument('--blk_widths', type=int, nargs='+', default=[32, 64, 128],
                         help='Block widths for low rank.')
+    parser.add_argument('--alpha', type=float, default=1,
+                        help='Step-size')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay.')
-    parser.add_argument('--max_epoch', type=int, default=120,
+    parser.add_argument('--max_epoch', type=int, default=90,
                         help='Maximum epochs.')
     parser.add_argument('--decay_epoch', type=int, default=30,
                         help='Decay epochs.')
@@ -407,6 +430,7 @@ if __name__ == '__main__':
     app = MultiScaleLowRankRecon(ksp, coord, dcf, mps, args.T, args.lamda,
                                  sgw=sgw,
                                  blk_widths=args.blk_widths,
+                                 alpha=args.alpha,
                                  beta=args.beta,
                                  max_epoch=args.max_epoch,
                                  decay_epoch=args.decay_epoch,
