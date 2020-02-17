@@ -29,7 +29,7 @@ def autofov(ksp, coord, dcf, num_ro=100, device=sp.cpu_device,
         kspc = ksp[:, :, :num_ro]
         coordc = coord[:, :num_ro, :]
         dcfc = dcf[:, :num_ro]
-        coordc2 = coordc * 2
+        coordc2 = sp.to_device(coordc * 2, device)
 
         num_coils = len(kspc)
         imgc_shape = np.array(sp.estimate_shape(coordc))
