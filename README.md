@@ -8,8 +8,9 @@ To start, we recommend trying the demo notebook in Google Colab: [![Open In Cola
 
 # Data
 
-An example DCE dataset can be found on Zenodo (This is the second DCE dataset in paper):
-https://zenodo.org/record/3647820
+An example DCE dataset is uploaded on Zenodo (This is the second DCE dataset in paper):
+[![](https://zenodo.org/badge/DOI/10.5281/zenodo.3647820.svg)](https://zenodo.org/record/3647820)
+
 
 For more description about the variable names, please see the `Variables` section below.
 
