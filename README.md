@@ -6,9 +6,9 @@ This repo contains scripts to reproduce some experiments in [Extreme MRI](https:
 
 To start, we recommend trying the demo notebooks on Google Colab:
 
-- DCE: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mikgroup/extreme_mri/blob/master/colab-dce-demo.ipynb).
+- DCE: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mikgroup/extreme_mri/blob/master/colab-dce-demo.ipynb)
 
-- Lung: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mikgroup/extreme_mri/blob/master/colab-lung-demo.ipynb).
+- Lung: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mikgroup/extreme_mri/blob/master/colab-lung-demo.ipynb)
 
 # Data
 
