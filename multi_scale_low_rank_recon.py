@@ -270,12 +270,11 @@ class MultiScaleLowRankRecon:
                       disable=disable, leave=True) as pbar:
                 loss = 0
                 for i, t in enumerate(np.random.permutation(self.T)):
-                    loss += self._update_R(t)
-                    loss += self._update_L(t)
-                    pbar.set_postfix(loss=loss * self.T / (i + 1) / 2)
+                    loss += self._update(t)
+                    pbar.set_postfix(loss=loss * self.T / (i + 1))
                     pbar.update()
 
-    def _update_R(self, t):
+    def _update(self, t):
         # Form image.
         img_t = 0
         for j in range(self.J):
@@ -311,66 +310,12 @@ class MultiScaleLowRankRecon:
         # Compute gradient.
         for j in range(self.J):
             lamda_j = self.lamda * self.G[j]
-
-            # R gradient.
-            g_R_jt = self.B[j].H(e_t)
-            g_R_jt *= self.xp.conj(self.L[j])
-            g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
-            g_R_jt += lamda_j * self.R[j][t]
 
             # Loss.
             loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
             loss_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
             if np.isinf(loss_t) or np.isnan(loss_t):
                 raise OverflowError
-
-            # Precondition.
-            L_j_norm2 = self.xp.sum(
-                self.xp.abs(self.L[j])**2, axis=range(-self.D, 0), keepdims=True)
-            g_R_jt /= self.J * L_j_norm2 + lamda_j
-
-            # Update.
-            self.R[j][t] -= g_R_jt
-
-        loss_t /= 2
-        return loss_t
-
-    def _update_L(self, t):
-        # Form image.
-        img_t = 0
-        for j in range(self.J):
-            img_t += self.B[j](self.L[j] * self.R[j][t])
-
-        # Download k-space arrays.
-        tr_start = t * self.tr_per_frame
-        tr_end = (t + 1) * self.tr_per_frame
-        coord_t = sp.to_device(self.coord[tr_start:tr_end], self.device)
-        dcf_t = sp.to_device(self.dcf[tr_start:tr_end], self.device)
-        ksp_t = sp.to_device(self.ksp[:, tr_start:tr_end], self.device)
-
-        # Data consistency.
-        e_t = 0
-        loss_t = 0
-        for c in range(self.C):
-            mps_c = sp.to_device(self.mps[c], self.device)
-            e_tc = sp.nufft(img_t * mps_c, coord_t)
-            e_tc -= ksp_t[c]
-            e_tc *= dcf_t**0.5
-            loss_t += self.xp.linalg.norm(e_tc)**2
-            e_tc *= dcf_t**0.5
-            e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
-            e_tc *= self.xp.conj(mps_c)
-            e_t += e_tc
-
-        if self.comm is not None:
-            self.comm.allreduce(e_t)
-            self.comm.allreduce(loss_t)
-
-        loss_t = loss_t.item()
-
-        # Compute gradient.
-        for j in range(self.J):
-            lamda_j = self.lamda * self.G[j]
 
             # L gradient.
             g_L_j = self.B[j].H(e_t)
@@ -378,19 +323,25 @@ class MultiScaleLowRankRecon:
             g_L_j += lamda_j / self.T * self.L[j]
             g_L_j *= self.T
 
-            # Loss.
-            loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
-            loss_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
-            if np.isinf(loss_t) or np.isnan(loss_t):
-                raise OverflowError
-
-            # Precondition.
+            # L precondition.
             R_j_norm2 = self.xp.sum(self.xp.abs(self.R[j])**2, axis=0)
             g_L_j /= self.J * R_j_norm2 + lamda_j
             g_L_j *= self.beta**(self.epoch // self.decay_epoch)
 
+            # R gradient.
+            g_R_jt = self.B[j].H(e_t)
+            g_R_jt *= self.xp.conj(self.L[j])
+            g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
+            g_R_jt += lamda_j * self.R[j][t]
+
+            # R precondition.
+            L_j_norm2 = self.xp.sum(
+                self.xp.abs(self.L[j])**2, axis=range(-self.D, 0), keepdims=True)
+            g_R_jt /= self.J * L_j_norm2 + lamda_j
+
             # Update.
             self.L[j] -= g_L_j
+            self.R[j][t] -= g_R_jt
 
         loss_t /= 2
         return loss_t
