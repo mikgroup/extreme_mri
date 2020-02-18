@@ -13,7 +13,7 @@ except:
     pass
 
 
-class MultiScaleLowRankRecon(object):
+class MultiScaleLowRankRecon:
     r"""Multi-scale low rank reconstruction.
 
     Considers the objective function,
@@ -51,7 +51,7 @@ class MultiScaleLowRankRecon(object):
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
                  blk_widths=[32, 64, 128], beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
-                 max_epoch=120, decay_epoch=30, max_power_iter=5,
+                 max_epoch=60, decay_epoch=20, max_power_iter=5,
                  show_pbar=True):
         self.ksp = ksp
         self.coord = coord
@@ -147,7 +147,6 @@ class MultiScaleLowRankRecon(object):
             self.ksp /= img_adj_norm
 
     def _init_vars(self):
-        # Initialize L.
         self.L = []
         self.R = []
         for j in range(self.J):
@@ -271,11 +270,72 @@ class MultiScaleLowRankRecon(object):
                       disable=disable, leave=True) as pbar:
                 loss = 0
                 for i, t in enumerate(np.random.permutation(self.T)):
-                    loss += self._update(t)
-                    pbar.set_postfix(loss=loss * self.T / (i + 1))
+                    loss += self._update_R(t)
+                    loss += self._update_L(t)
+                    pbar.set_postfix(loss=loss * self.T / (i + 1) / 2)
                     pbar.update()
 
-    def _update(self, t):
+    def _update_R(self, t):
+        # Form image.
+        img_t = 0
+        for j in range(self.J):
+            img_t += self.B[j](self.L[j] * self.R[j][t])
+
+        # Download k-space arrays.
+        tr_start = t * self.tr_per_frame
+        tr_end = (t + 1) * self.tr_per_frame
+        coord_t = sp.to_device(self.coord[tr_start:tr_end], self.device)
+        dcf_t = sp.to_device(self.dcf[tr_start:tr_end], self.device)
+        ksp_t = sp.to_device(self.ksp[:, tr_start:tr_end], self.device)
+
+        # Data consistency.
+        e_t = 0
+        loss_t = 0
+        for c in range(self.C):
+            mps_c = sp.to_device(self.mps[c], self.device)
+            e_tc = sp.nufft(img_t * mps_c, coord_t)
+            e_tc -= ksp_t[c]
+            e_tc *= dcf_t**0.5
+            loss_t += self.xp.linalg.norm(e_tc)**2
+            e_tc *= dcf_t**0.5
+            e_tc = sp.nufft_adjoint(e_tc, coord_t, oshape=self.img_shape)
+            e_tc *= self.xp.conj(mps_c)
+            e_t += e_tc
+
+        if self.comm is not None:
+            self.comm.allreduce(e_t)
+            self.comm.allreduce(loss_t)
+
+        loss_t = loss_t.item()
+
+        # Compute gradient.
+        for j in range(self.J):
+            lamda_j = self.lamda * self.G[j]
+
+            # R gradient.
+            g_R_jt = self.B[j].H(e_t)
+            g_R_jt *= self.xp.conj(self.L[j])
+            g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
+            g_R_jt += lamda_j * self.R[j][t]
+
+            # Loss.
+            loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
+            loss_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
+            if np.isinf(loss_t) or np.isnan(loss_t):
+                raise OverflowError
+
+            # Precondition.
+            L_j_norm2 = self.xp.sum(
+                self.xp.abs(self.L[j])**2, axis=range(-self.D, 0), keepdims=True)
+            g_R_jt /= self.J * L_j_norm2 + lamda_j
+
+            # Update.
+            self.R[j][t] -= g_R_jt
+
+        loss_t /= 2
+        return loss_t
+
+    def _update_L(self, t):
         # Form image.
         img_t = 0
         for j in range(self.J):
@@ -318,12 +378,6 @@ class MultiScaleLowRankRecon(object):
             g_L_j += lamda_j / self.T * self.L[j]
             g_L_j *= self.T
 
-            # R gradient.
-            g_R_jt = self.B[j].H(e_t)
-            g_R_jt *= self.xp.conj(self.L[j])
-            g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
-            g_R_jt += lamda_j * self.R[j][t]
-
             # Loss.
             loss_t += lamda_j / self.T * self.xp.linalg.norm(self.L[j]).item()**2
             loss_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
@@ -331,15 +385,12 @@ class MultiScaleLowRankRecon(object):
                 raise OverflowError
 
             # Precondition.
-            g_L_j /= (
-                self.xp.sum(self.xp.abs(self.R[j])**2, axis=0) + lamda_j)
-            g_R_jt /= (
-                self.xp.sum(self.xp.abs(self.L[j])**2, axis=range(-self.D, 0),
-                            keepdims=True) + lamda_j)
+            R_j_norm2 = self.xp.sum(self.xp.abs(self.R[j])**2, axis=0)
+            g_L_j /= self.J * R_j_norm2 + lamda_j
+            g_L_j *= self.beta**(self.epoch // self.decay_epoch)
 
-            # Add.
-            self.L[j] -= self.beta**(self.epoch // self.decay_epoch) * g_L_j
-            self.R[j][t] -= g_R_jt
+            # Update.
+            self.L[j] -= g_L_j
 
         loss_t /= 2
         return loss_t
@@ -353,9 +404,9 @@ if __name__ == '__main__':
                         help='Block widths for low rank.')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay.')
-    parser.add_argument('--max_epoch', type=int, default=120,
+    parser.add_argument('--max_epoch', type=int, default=60,
                         help='Maximum epochs.')
-    parser.add_argument('--decay_epoch', type=int, default=30,
+    parser.add_argument('--decay_epoch', type=int, default=20,
                         help='Decay epochs.')
     parser.add_argument('--max_power_iter', type=int, default=5,
                         help='Maximum power iterations.')
