@@ -22,7 +22,7 @@ Example DCE and lung datasets can be found on Zenodo:
 For more description about how the data was acquired, please see the manusciprt.
 For description about the variable names, please see the `Variables` section below.
 
-# Running locally on command line
+# Command line scripts
 
 ## Installation
 
