@@ -6,6 +6,13 @@ This repo contains scripts to reproduce some experiments in [Extreme MRI](https:
 
 To start, we recommend trying the demo notebook in Google Colab: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mikgroup/extreme_mri/blob/master/colab-demo.ipynb).
 
+# Data
+
+An example DCE dataset can be found on Zenodo (This is the second DCE dataset in paper):
+https://zenodo.org/record/3647820
+
+For more description about the variable names, please see the `Variables` section below.
+
 # Running locally on command line
 
 ## Installation
