@@ -192,20 +192,16 @@ class MultiScaleLowRankRecon(object):
                     pbar.update()
 
             # Normalize L.
-            sigma = []
+            self.sigma = []
             for j in range(self.J):
                 L_j_norm = self.xp.sum(self.xp.abs(self.L[j])**2,
                                        axis=range(-self.D, 0), keepdims=True)**0.5
                 self.L[j] /= L_j_norm
-                sigma.append(L_j_norm)
+                self.sigma.append(L_j_norm)
 
-        sigma_max = 0
         for j in range(self.J):
-            self.L[j] *= sigma[j]**0.5
-            self.R[j] *= sigma[j]**0.5
-            sigma_max = max(sigma[j].max().item(), sigma_max)
-
-        self.alpha /= sigma_max
+            self.L[j] *= self.sigma[j]**0.5
+            self.R[j] *= self.sigma[j]**0.5
 
     def _AHyH_L(self, t):
         # Download k-space arrays.
@@ -356,6 +352,10 @@ class MultiScaleLowRankRecon(object):
             loss_t += lamda_j * self.xp.linalg.norm(self.R[j][t]).item()**2
             if np.isinf(loss_t) or np.isnan(loss_t):
                 raise OverflowError
+
+            # Precondition.
+            g_L_j /= self.J * self.sigma[j] + lamda_j
+            g_R_jt /= self.J * self.sigma[j] + lamda_j
 
             # Add.
             self.L[j] -= self.alpha * self.beta**(self.epoch // self.decay_epoch) * g_L_j
