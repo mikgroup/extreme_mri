@@ -345,21 +345,11 @@ class MultiScaleLowRankRecon:
             g_L_j += lamda_j / self.T * self.L[j]
             g_L_j *= self.T
 
-            # L precondition.
-            R_j_norm2 = self.xp.sum(self.xp.abs(self.R[j])**2, axis=0)
-            g_L_j /= self.J * R_j_norm2 + lamda_j
-            g_L_j *= self.beta**(self.epoch // self.decay_epoch)
-
             # R gradient.
             g_R_jt = self.B[j].H(e_t)
             g_R_jt *= self.xp.conj(self.L[j])
             g_R_jt = self.xp.sum(g_R_jt, axis=range(-self.D, 0), keepdims=True)
             g_R_jt += lamda_j * self.R[j][t]
-
-            # R precondition.
-            L_j_norm2 = self.xp.sum(
-                self.xp.abs(self.L[j])**2, axis=range(-self.D, 0), keepdims=True)
-            g_R_jt /= self.J * L_j_norm2 + lamda_j
 
             # Precondition.
             g_L_j /= self.J * self.sigma[j] + lamda_j
