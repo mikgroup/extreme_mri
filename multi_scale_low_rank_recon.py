@@ -49,7 +49,7 @@ class MultiScaleLowRankRecon:
 
     """
     def __init__(self, ksp, coord, dcf, mps, T, lamda,
-                 blk_widths=[32, 64, 128], beta=0.5, sgw=None,
+                 blk_widths=[32, 64, 128], alpha=1, beta=0.5, sgw=None,
                  device=sp.cpu_device, comm=None, seed=0,
                  max_epoch=60, decay_epoch=20, max_power_iter=5,
                  show_pbar=True):
@@ -61,6 +61,7 @@ class MultiScaleLowRankRecon:
         self.blk_widths = blk_widths
         self.T = T
         self.lamda = lamda
+        self.alpha = alpha
         self.beta = beta
         self.device = sp.Device(device)
         self.comm = comm
@@ -378,6 +379,8 @@ if __name__ == '__main__':
         description='Multi-Scale Low rank reconstruction.')
     parser.add_argument('--blk_widths', type=int, nargs='+', default=[32, 64, 128],
                         help='Block widths for low rank.')
+    parser.add_argument('--alpha', type=float, default=1,
+                        help='Initial step-size.')
     parser.add_argument('--beta', type=float, default=0.5,
                         help='Step-size decay.')
     parser.add_argument('--max_epoch', type=int, default=60,
@@ -435,6 +438,7 @@ if __name__ == '__main__':
     app = MultiScaleLowRankRecon(ksp, coord, dcf, mps, args.T, args.lamda,
                                  sgw=sgw,
                                  blk_widths=args.blk_widths,
+                                 alpha=args.alpha,
                                  beta=args.beta,
                                  max_epoch=args.max_epoch,
                                  decay_epoch=args.decay_epoch,
