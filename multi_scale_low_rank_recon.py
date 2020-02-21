@@ -253,7 +253,28 @@ class MultiScaleLowRankRecon:
         with self.device:
             self._init_vars()
             self._power_method()
-            self._sgd()
+            self.L_init = []
+            self.R_init = []
+            for j in range(self.J):
+                self.L_init.append(sp.to_device(self.L[j]))
+                self.R_init.append(sp.to_device(self.R[j]))
+
+            done = False
+            while not done:
+                try:
+                    self.L = []
+                    self.R = []
+                    for j in range(self.J):
+                        self.L.append(sp.to_device(self.L_init[j], self.device))
+                        self.R.append(sp.to_device(self.R_init[j], self.device))
+
+                    self._sgd()
+                    done = True
+                except OverflowError:
+                    self.alpha *= self.beta
+                    if self.show_pbar:
+                        tqdm.write('\nReconstruction diverged. '
+                                   'Scaling step-size by {}.'.format(self.beta))
 
             if self.comm is None or self.comm.rank == 0:
                 return MultiScaleLowRankImage(
