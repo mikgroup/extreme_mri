@@ -2,19 +2,27 @@
 
 This repo contains scripts to reproduce some experiments in [Extreme MRI](https://arxiv.org/abs/1909.13482). It uses the Python package [sigpy](https://github.com/mikgroup/sigpy).
 
-# Colab Demo
+# Colab Demos
 
-To start, we recommend trying the demo notebook in Google Colab: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mikgroup/extreme_mri/blob/master/colab-demo.ipynb).
+To start, we recommend trying the demo notebooks on Google Colab:
+
+- DCE: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mikgroup/extreme_mri/blob/master/colab-dce-demo.ipynb)
+
+- Lung: [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/mikgroup/extreme_mri/blob/master/colab-lung-demo.ipynb)
 
 # Data
 
-An example DCE dataset is uploaded on Zenodo (This is the second DCE dataset in paper):
-[![](https://zenodo.org/badge/DOI/10.5281/zenodo.3647820.svg)](https://zenodo.org/record/3647820)
+Example DCE and lung datasets can be found on Zenodo:
+
+- DCE: [![](https://zenodo.org/badge/DOI/10.5281/zenodo.3647820.svg)](https://zenodo.org/record/3647820)
+
+- Lung: [![](https://zenodo.org/badge/DOI/10.5281/zenodo.3672170.svg)](https://zenodo.org/record/3672170)
 
 
-For more description about the variable names, please see the `Variables` section below.
+For more description about how the data was acquired, please see the manusciprt.
+For description about the variable names, please see the `Variables` section below.
 
-# Running locally on command line
+# Command line scripts
 
 ## Installation
 
